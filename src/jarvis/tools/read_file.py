@@ -17,7 +17,7 @@ class ReadFileTool(Tool):
         requested_path = arguments.get("path")
 
         if not isinstance(requested_path, str):
-            raise ValueError("'path' must be a string.")
+            raise TypeError("'path' must be a string.")
 
         target = (self.allowed_root / requested_path).resolve()
 
