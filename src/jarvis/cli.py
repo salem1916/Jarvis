@@ -39,11 +39,43 @@ def main() -> None:
             print("Available commands:")
             print("  status          Show JARVIS status")
             print("  read <file>     Read a file from the workspace")
+            print("  list [folder]   List files in the workspace")
             print("  exit            Exit JARVIS")
             continue
 
         if command == "status":
             print("JARVIS Core is running.")
+            continue
+
+        if command == "list" or command.startswith("list "):
+            path = command.removeprefix("list").strip() or "."
+
+            request = ToolRequest(
+                tool_name="list_directory",
+                arguments={"path": path},
+            )
+
+            try:
+                result = app.execute_tool(request)
+
+                if isinstance(result, list):
+                    for item in result:
+                        print(item)
+                else:
+                    print(result)
+
+            except PermissionDeniedError:
+                print("Permission denied: READ_FILE is disabled.")
+
+            except ConfirmationRequiredError:
+                print("This action requires confirmation.")
+
+            except NotADirectoryError:
+                print(f"Not a directory: {path}")
+
+            except ValueError as exc:
+                print(f"Invalid request: {exc}")
+
             continue
 
         if command.startswith("read "):
