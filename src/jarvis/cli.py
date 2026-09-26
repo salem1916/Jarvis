@@ -23,6 +23,10 @@ def main() -> None:
         "READ_FILE permission:",
         "enabled" if settings.allow_read_file else "disabled",
     )
+    print(
+        "READ_SYSTEM_INFO permission:",
+        "enabled" if settings.allow_system_info else "disabled",
+    )
     print("Type 'help' to see available commands.")
 
     while True:
@@ -38,6 +42,7 @@ def main() -> None:
         if command == "help":
             print("Available commands:")
             print("  status          Show JARVIS status")
+            print("  system          Show basic computer information")
             print("  read <file>     Read a file from the workspace")
             print("  list [folder]   List files in the workspace")
             print("  exit            Exit JARVIS")
@@ -45,6 +50,28 @@ def main() -> None:
 
         if command == "status":
             print("JARVIS Core is running.")
+            continue
+
+        if command == "system":
+            request = ToolRequest(
+                tool_name="system_info",
+            )
+
+            try:
+                result = app.execute_tool(request)
+
+                if isinstance(result, dict):
+                    for key, value in result.items():
+                        print(f"{key}: {value}")
+                else:
+                    print(result)
+
+            except PermissionDeniedError:
+                print("Permission denied: READ_SYSTEM_INFO is disabled.")
+
+            except ConfirmationRequiredError:
+                print("This action requires confirmation.")
+
             continue
 
         if command == "list" or command.startswith("list "):
