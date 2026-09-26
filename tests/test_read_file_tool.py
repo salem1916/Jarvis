@@ -1,11 +1,11 @@
 from pathlib import Path
 
 import pytest
-from jarvis.tools.read_file import ReadFileTool
 
 from jarvis.security.capabilities import Capability
 from jarvis.security.policy import PermissionPolicy
 from jarvis.tools.executor import ToolExecutor
+from jarvis.tools.read_file import ReadFileTool
 
 
 def test_read_file_reads_allowed_file(tmp_path: Path):
