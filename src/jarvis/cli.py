@@ -1,0 +1,75 @@
+from jarvis.bootstrap import build_application
+from jarvis.core.config import load_settings
+from jarvis.core.tool_request import ToolRequest
+from jarvis.tools.executor import (
+    ConfirmationRequiredError,
+    PermissionDeniedError,
+)
+
+
+def main() -> None:
+    settings = load_settings()
+
+    settings.workspace_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    app = build_application(settings)
+
+    print("JARVIS Core v0.1")
+    print(f"Workspace: {settings.workspace_dir.resolve()}")
+    print(
+        "READ_FILE permission:",
+        "enabled" if settings.allow_read_file else "disabled",
+    )
+    print("Type 'help' to see available commands.")
+
+    while True:
+        command = input("\njarvis> ").strip()
+
+        if not command:
+            continue
+
+        if command in {"exit", "quit"}:
+            print("JARVIS shutting down.")
+            break
+
+        if command == "help":
+            print("Available commands:")
+            print("  status          Show JARVIS status")
+            print("  read <file>     Read a file from the workspace")
+            print("  exit            Exit JARVIS")
+            continue
+
+        if command == "status":
+            print("JARVIS Core is running.")
+            continue
+
+        if command.startswith("read "):
+            path = command.removeprefix("read ").strip()
+
+            request = ToolRequest(
+                tool_name="read_file",
+                arguments={"path": path},
+            )
+
+            try:
+                result = app.execute_tool(request)
+                print(result)
+
+            except PermissionDeniedError:
+                print("Permission denied: READ_FILE is disabled.")
+
+            except ConfirmationRequiredError:
+                print("This action requires confirmation.")
+
+            except FileNotFoundError:
+                print(f"File not found: {path}")
+
+            except ValueError as exc:
+                print(f"Invalid request: {exc}")
+
+            continue
+
+        print("Unknown command. Type 'help'.")
