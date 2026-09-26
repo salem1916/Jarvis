@@ -2,7 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.core.agent_service import AgentService
+from jarvis.core.agent_service import (
+    AgentLoopLimitError,
+    AgentService,
+)
 from jarvis.models.base import (
     ModelProvider,
     ModelRequest,
@@ -16,15 +19,17 @@ from jarvis.tools.executor import (
     ToolExecutor,
 )
 from jarvis.tools.list_directory import ListDirectoryTool
+from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.service import ToolService
 
 
 class NormalResponseProvider(ModelProvider):
     """
-    Fake model for normal conversation.
+    Fake AI provider for normal conversation.
 
-    It never requests a tool.
+    It answers immediately and does not request
+    any JARVIS tools.
     """
 
     name = "test"
@@ -33,6 +38,8 @@ class NormalResponseProvider(ModelProvider):
         self,
         request: ModelRequest,
     ) -> ModelResponse:
+        # This fake provider does not need to inspect
+        # the request.
         del request
 
         return ModelResponse(
@@ -42,32 +49,46 @@ class NormalResponseProvider(ModelProvider):
         )
 
 
-class ToolCallingProvider(ModelProvider):
+class MultiStepProvider(ModelProvider):
     """
-    Fake model that behaves like a tiny agent.
+    Fake AI provider that simulates a real
+    multi-step JARVIS agent.
 
-    First model call:
-        requests list_directory.
+    Round 1:
+        list_directory
 
-    Second model call:
-        receives the REAL tool result and produces
-        the final natural-language response.
+    Round 2:
+        after discovering hello.txt,
+        request read_file
+
+    Round 3:
+        after receiving the real contents,
+        answer the user.
     """
 
     name = "test"
+
+    def __init__(self) -> None:
+        self.call_count = 0
 
     def generate(
         self,
         request: ModelRequest,
     ) -> ModelResponse:
-        # -------------------------------------------------
-        # FIRST CALL
-        #
-        # Tools are present, so behave like the model
-        # deciding which JARVIS tool it needs.
-        # -------------------------------------------------
+        self.call_count += 1
 
-        if request.tools:
+        # ---------------------------------------------
+        # MODEL CALL 1
+        #
+        # The model does not know which files exist yet.
+        # It chooses list_directory.
+        # ---------------------------------------------
+
+        if self.call_count == 1:
+            # AgentService should have supplied
+            # JARVIS's available tools.
+            assert request.tools
+
             return ModelResponse(
                 text="",
                 provider=self.name,
@@ -82,24 +103,114 @@ class ToolCallingProvider(ModelProvider):
                 ],
             )
 
-        # -------------------------------------------------
-        # SECOND CALL
+        # ---------------------------------------------
+        # MODEL CALL 2
         #
-        # There are no tools now.
-        #
-        # The agent should have inserted the REAL result
-        # into this final request.
-        # -------------------------------------------------
+        # JARVIS should now have executed
+        # list_directory and shown the real filename
+        # to the model.
+        # ---------------------------------------------
 
-        assert "hello.txt" in request.prompt
+        if self.call_count == 2:
+            assert "hello.txt" in request.prompt
+
+            return ModelResponse(
+                text="",
+                provider=self.name,
+                model="test-model",
+                tool_calls=[
+                    ModelToolCall(
+                        name="read_file",
+                        arguments={
+                            "path": "hello.txt",
+                        },
+                    )
+                ],
+            )
+
+        # ---------------------------------------------
+        # MODEL CALL 3
+        #
+        # JARVIS should now have executed read_file.
+        #
+        # The actual contents must appear in the
+        # verified tool results supplied to the model.
+        # ---------------------------------------------
+
+        assert "Hello from the real file" in request.prompt
 
         return ModelResponse(
             text=(
-                "Your workspace contains "
-                "the file hello.txt."
+                "The file says: "
+                "Hello from the real file"
             ),
             provider=self.name,
             model="test-model",
+        )
+
+
+class ToolCallingProvider(ModelProvider):
+    """
+    Fake AI provider used for the permission test.
+
+    It requests list_directory.
+
+    When READ_FILE is disabled, JARVIS must reject
+    this request before the model gets another turn.
+    """
+
+    name = "test"
+
+    def generate(
+        self,
+        request: ModelRequest,
+    ) -> ModelResponse:
+        assert request.tools
+
+        return ModelResponse(
+            text="",
+            provider=self.name,
+            model="test-model",
+            tool_calls=[
+                ModelToolCall(
+                    name="list_directory",
+                    arguments={
+                        "path": ".",
+                    },
+                )
+            ],
+        )
+
+
+class EndlessToolProvider(ModelProvider):
+    """
+    Fake broken AI provider.
+
+    It deliberately requests the same tool forever.
+
+    JARVIS must detect this and stop the loop.
+    """
+
+    name = "test"
+
+    def generate(
+        self,
+        request: ModelRequest,
+    ) -> ModelResponse:
+        assert request.tools
+
+        return ModelResponse(
+            text="",
+            provider=self.name,
+            model="test-model",
+            tool_calls=[
+                ModelToolCall(
+                    name="list_directory",
+                    arguments={
+                        "path": ".",
+                    },
+                )
+            ],
         )
 
 
@@ -109,20 +220,34 @@ def build_tool_service(
     allow_read: bool,
 ) -> ToolService:
     """
-    Build a real JARVIS ToolService.
+    Build the real JARVIS tool/security pipeline
+    for the tests.
 
-    These tests use the actual:
-    - ToolRegistry
-    - PermissionPolicy
-    - ToolExecutor
+    We deliberately use the real:
 
-    instead of bypassing the security architecture.
+        ToolRegistry
+            ↓
+        PermissionPolicy
+            ↓
+        ToolExecutor
+            ↓
+        Tools
+
+    so our tests do not bypass the architecture.
     """
 
     registry = ToolRegistry()
 
+    # Register the two tools needed for our
+    # multi-step test.
     registry.register(
         ListDirectoryTool(
+            workspace,
+        )
+    )
+
+    registry.register(
+        ReadFileTool(
             workspace,
         )
     )
@@ -152,8 +277,8 @@ def test_agent_returns_normal_model_response(
     tmp_path: Path,
 ) -> None:
     """
-    Normal conversation should still work without
-    using any tools.
+    A normal conversation should still work
+    without executing any tools.
     """
 
     tool_service = build_tool_service(
@@ -173,17 +298,27 @@ def test_agent_returns_normal_model_response(
     assert result == "Hello from JARVIS"
 
 
-def test_agent_executes_tool_and_returns_final_answer(
+def test_agent_executes_multiple_tool_rounds(
     tmp_path: Path,
 ) -> None:
     """
-    Full agent flow:
+    Test the complete multi-step agent flow.
 
-    natural language
-        -> model chooses tool
-        -> real tool executes
-        -> real result returned
-        -> model produces final answer
+    User request
+        ↓
+    AI chooses list_directory
+        ↓
+    JARVIS executes it
+        ↓
+    AI sees hello.txt
+        ↓
+    AI chooses read_file
+        ↓
+    JARVIS executes it
+        ↓
+    AI sees the real file contents
+        ↓
+    final answer
     """
 
     file_path = (
@@ -191,9 +326,11 @@ def test_agent_executes_tool_and_returns_final_answer(
     )
 
     file_path.write_text(
-        "Hello",
+        "Hello from the real file",
         encoding="utf-8",
     )
+
+    provider = MultiStepProvider()
 
     tool_service = build_tool_service(
         tmp_path,
@@ -201,18 +338,25 @@ def test_agent_executes_tool_and_returns_final_answer(
     )
 
     agent = AgentService(
-        model_provider=ToolCallingProvider(),
+        model_provider=provider,
         tool_service=tool_service,
     )
 
     result = agent.run(
-        "What files are in my workspace?",
+        "Find a text file and tell me what it contains.",
     )
 
     assert result == (
-        "Your workspace contains "
-        "the file hello.txt."
+        "The file says: "
+        "Hello from the real file"
     )
+
+    # There should have been exactly:
+    #
+    # 1. choose list_directory
+    # 2. choose read_file
+    # 3. produce final answer
+    assert provider.call_count == 3
 
 
 def test_agent_cannot_bypass_permission_policy(
@@ -221,9 +365,11 @@ def test_agent_cannot_bypass_permission_policy(
     """
     Security test.
 
-    Even though the AI requests list_directory,
-    execution must fail when READ_FILE permission
-    is disabled.
+    Even though the AI asks for a legitimate tool,
+    JARVIS must refuse execution when READ_FILE
+    permission is disabled.
+
+    The model cannot bypass PermissionPolicy.
     """
 
     tool_service = build_tool_service(
@@ -241,4 +387,37 @@ def test_agent_cannot_bypass_permission_policy(
     ):
         agent.run(
             "What files are in my workspace?",
+        )
+
+
+def test_agent_stops_infinite_tool_loop(
+    tmp_path: Path,
+) -> None:
+    """
+    Safety test.
+
+    A broken or confused model must not be able
+    to execute tools forever.
+
+    We deliberately limit this agent to two
+    tool rounds.
+    """
+
+    tool_service = build_tool_service(
+        tmp_path,
+        allow_read=True,
+    )
+
+    agent = AgentService(
+        model_provider=EndlessToolProvider(),
+        tool_service=tool_service,
+        max_tool_rounds=2,
+    )
+
+    with pytest.raises(
+        AgentLoopLimitError,
+        match="maximum number of tool rounds",
+    ):
+        agent.run(
+            "Keep listing the directory forever.",
         )
