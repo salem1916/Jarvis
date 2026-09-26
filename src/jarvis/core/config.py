@@ -13,8 +13,14 @@ class JarvisSettings(BaseSettings):
     allow_read_file: bool = False
 
 
-def load_settings() -> JarvisSettings:
-    return JarvisSettings(
-        _env_file=".env",
-        _env_file_encoding="utf-8",
+class _EnvJarvisSettings(JarvisSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="JARVIS_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
+
+
+def load_settings() -> JarvisSettings:
+    return _EnvJarvisSettings()
