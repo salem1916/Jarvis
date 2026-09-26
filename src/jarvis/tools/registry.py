@@ -19,3 +19,6 @@ class ToolRegistry:
 
     def names(self) -> tuple[str, ...]:
         return tuple(self._tools)
+
+    def tools(self) -> tuple[Tool, ...]:
+        return tuple(self._tools.values())

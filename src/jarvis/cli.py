@@ -1,5 +1,6 @@
 from jarvis.bootstrap import build_application
 from jarvis.core.config import load_settings
+from jarvis.core.system_prompt import build_system_prompt
 from jarvis.core.tool_request import ToolRequest
 from jarvis.tools.executor import (
     ConfirmationRequiredError,
@@ -16,6 +17,10 @@ def main() -> None:
     )
 
     app = build_application(settings)
+
+    system_prompt = build_system_prompt(
+        app.tool_service.registry,
+    )
 
     print("JARVIS Core v0.1")
     print(f"Workspace: {settings.workspace_dir.resolve()}")
@@ -65,10 +70,7 @@ def main() -> None:
             try:
                 response = app.ask(
                     prompt,
-                    system_prompt=(
-                        "You are JARVIS, Salem's personal AI assistant. "
-                        "Be helpful, concise, and accurate."
-                    ),
+                    system_prompt=system_prompt,
                 )
 
                 print(response.text)
