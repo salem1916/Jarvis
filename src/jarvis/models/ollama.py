@@ -1,6 +1,7 @@
 import httpx
 
 from jarvis.models.base import (
+    ModelMessage,
     ModelProvider,
     ModelRequest,
     ModelResponse,
@@ -10,21 +11,18 @@ from jarvis.models.base import (
 
 class OllamaProvider(ModelProvider):
     """
-    Model provider for a local Ollama server.
+    Local model provider using Ollama's HTTP API.
 
-    JARVIS talks to Ollama through its HTTP API.
+    Responsibilities:
 
-    This provider is responsible for:
-    - sending prompts to Ollama
-    - sending available tool definitions
-    - receiving normal text responses
-    - receiving structured tool-call requests
+    - send normal conversations
+    - send tool definitions
+    - preserve multi-turn message history
+    - send REAL tool results back using role="tool"
+    - parse model tool requests
 
     IMPORTANT:
-    This class does NOT execute tools.
-
-    It only tells the rest of JARVIS:
-    "The model wants to call this tool with these arguments."
+    This provider NEVER executes tools.
     """
 
     name = "ollama"
@@ -44,66 +42,33 @@ class OllamaProvider(ModelProvider):
         request: ModelRequest,
     ) -> ModelResponse:
         """
-        Send a ModelRequest to Ollama and convert the result
-        into JARVIS's provider-independent ModelResponse.
+        Send one request to Ollama.
+
+        If ModelRequest.messages contains conversation history,
+        that history is used.
+
+        Otherwise we preserve the old simple behavior using
+        system_prompt + prompt.
         """
 
-        # Ollama expects conversation messages.
-        messages: list[dict[str, str]] = []
-
-        # Add the JARVIS system prompt first when one exists.
-        if request.system_prompt:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": request.system_prompt,
-                }
-            )
-
-        # Add the user's message.
-        messages.append(
-            {
-                "role": "user",
-                "content": request.prompt,
-            }
+        messages = self._build_messages(
+            request
         )
 
-        # Base Ollama request.
-        #
-        # think=False:
-        # prevents the model from doing long visible reasoning
-        # for simple JARVIS requests.
-        #
-        # keep_alive="10m":
-        # keeps the model loaded for faster follow-up requests.
         payload: dict[str, object] = {
             "model": self.model,
             "messages": messages,
             "stream": False,
+
+            # Keep normal JARVIS interaction fast.
             "think": False,
+
+            # Avoid reloading the model for every request.
             "keep_alive": "10m",
         }
 
-        # If JARVIS gives the model tools, convert our generic
-        # ModelToolDefinition objects into Ollama's tool format.
-        #
-        # Example:
-        #
-        # JARVIS:
-        # ModelToolDefinition(
-        #     name="list_directory",
-        #     ...
-        # )
-        #
-        # becomes:
-        #
-        # {
-        #     "type": "function",
-        #     "function": {
-        #         "name": "list_directory",
-        #         ...
-        #     }
-        # }
+        # Convert JARVIS's generic tool definitions into
+        # Ollama's function-calling format.
         if request.tools:
             payload["tools"] = [
                 {
@@ -117,7 +82,6 @@ class OllamaProvider(ModelProvider):
                 for tool in request.tools
             ]
 
-        # Send the request to the local Ollama server.
         try:
             response = httpx.post(
                 f"{self.base_url}/api/chat",
@@ -132,31 +96,33 @@ class OllamaProvider(ModelProvider):
                 "Could not communicate with the Ollama server."
             ) from exc
 
-        # Convert Ollama's JSON response into Python data.
         data = response.json()
 
-        message = data.get("message")
+        message = data.get(
+            "message"
+        )
 
-        if not isinstance(message, dict):
+        if not isinstance(
+            message,
+            dict,
+        ):
             raise TypeError(
                 "Ollama returned an invalid response."
             )
 
-        # Tool-call responses can legitimately have an empty
-        # content field, so "" is allowed here.
         content = message.get(
             "content",
             "",
         )
 
-        if not isinstance(content, str):
+        if not isinstance(
+            content,
+            str,
+        ):
             raise TypeError(
                 "Ollama response did not contain valid text."
             )
 
-        # This will hold any tool requests made by the model.
-        #
-        # Again: we are NOT executing anything here.
         tool_calls: list[ModelToolCall] = []
 
         raw_tool_calls = message.get(
@@ -164,13 +130,14 @@ class OllamaProvider(ModelProvider):
             [],
         )
 
-        if not isinstance(raw_tool_calls, list):
+        if not isinstance(
+            raw_tool_calls,
+            list,
+        ):
             raise TypeError(
                 "Ollama returned invalid tool calls."
             )
 
-        # Convert Ollama-specific tool calls into our own
-        # provider-independent ModelToolCall format.
         for raw_tool_call in raw_tool_calls:
             if not isinstance(
                 raw_tool_call,
@@ -224,13 +191,101 @@ class OllamaProvider(ModelProvider):
                 )
             )
 
-        # Return a generic JARVIS response.
-        #
-        # Other providers such as OpenAI or Claude will later
-        # return this same ModelResponse type.
         return ModelResponse(
             text=content,
             provider=self.name,
             model=self.model,
             tool_calls=tool_calls,
         )
+
+    def _build_messages(
+        self,
+        request: ModelRequest,
+    ) -> list[dict[str, object]]:
+        """
+        Convert JARVIS ModelMessage objects into Ollama messages.
+
+        Native tool history looks like:
+
+        user
+          ↓
+        assistant + tool_calls
+          ↓
+        tool result
+          ↓
+        assistant continues
+
+        This is much better than rewriting tool results into
+        another fake user prompt.
+        """
+
+        # If real conversation history exists, use it.
+        if request.messages:
+            return [
+                self._convert_message(
+                    message
+                )
+                for message in request.messages
+            ]
+
+        # Backwards-compatible simple request.
+        messages: list[dict[str, object]] = []
+
+        if request.system_prompt:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": request.system_prompt,
+                }
+            )
+
+        messages.append(
+            {
+                "role": "user",
+                "content": request.prompt,
+            }
+        )
+
+        return messages
+
+    @staticmethod
+    def _convert_message(
+        message: ModelMessage,
+    ) -> dict[str, object]:
+        """
+        Convert one generic JARVIS message into the
+        structure expected by Ollama.
+        """
+
+        converted: dict[str, object] = {
+            "role": message.role,
+            "content": message.content,
+        }
+
+        # Assistant messages may contain requests
+        # for one or more tools.
+        if message.tool_calls:
+            converted["tool_calls"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                    },
+                }
+                for tool_call in message.tool_calls
+            ]
+
+        # Ollama requires the tool name on a tool-result
+        # message so it knows which call produced the result.
+        if message.role == "tool":
+            if not message.tool_name:
+                raise TypeError(
+                    "Tool messages require a tool_name."
+                )
+
+            converted["tool_name"] = (
+                message.tool_name
+            )
+
+        return converted

@@ -2,20 +2,27 @@ import httpx
 import pytest
 
 from jarvis.models.base import (
+    ModelMessage,
     ModelRequest,
+    ModelToolCall,
     ModelToolDefinition,
 )
 from jarvis.models.ollama import OllamaProvider
 
+# ---------------------------------------------------------
+# TEST 1
+# Normal text response
+# ---------------------------------------------------------
 
-# Test 1:
-# Verifies that a normal Ollama response is converted
-# into our own ModelResponse correctly.
+
 def test_ollama_provider_generates_response(
     monkeypatch,
-):
-    # We replace the real HTTP request with a fake one.
-    # This means the test does NOT need a real Ollama server.
+) -> None:
+    """
+    Verify that a normal Ollama text response is
+    converted into JARVIS's ModelResponse correctly.
+    """
+
     def fake_post(
         url: str,
         *,
@@ -40,7 +47,7 @@ def test_ollama_provider_generates_response(
             },
         )
 
-    # Replace httpx.post temporarily with our fake function.
+    # Replace the real HTTP request with our fake one.
     monkeypatch.setattr(
         httpx,
         "post",
@@ -57,21 +64,28 @@ def test_ollama_provider_generates_response(
         )
     )
 
-    # Check that Ollama's response was parsed correctly.
     assert response.text == "Hello from local AI"
     assert response.provider == "ollama"
     assert response.model == "test-model"
 
-    # A normal chat response should have no tool calls.
+    # Normal chat should not contain tool calls.
     assert response.tool_calls == []
 
 
-# Test 2:
-# Verifies that JARVIS sends the system prompt
-# and user message to Ollama in the correct order.
+# ---------------------------------------------------------
+# TEST 2
+# System prompt
+# ---------------------------------------------------------
+
+
 def test_ollama_provider_sends_system_prompt(
     monkeypatch,
-):
+) -> None:
+    """
+    Verify that the system prompt is sent before
+    the user's message.
+    """
+
     captured_json: object | None = None
 
     def fake_post(
@@ -82,7 +96,6 @@ def test_ollama_provider_sends_system_prompt(
     ) -> httpx.Response:
         nonlocal captured_json
 
-        # Save the payload so the test can inspect it later.
         captured_json = json
 
         del timeout
@@ -120,8 +133,6 @@ def test_ollama_provider_sends_system_prompt(
         )
     )
 
-    # This also lets Pyright know captured_json
-    # is definitely a dictionary after this point.
     assert isinstance(
         captured_json,
         dict,
@@ -139,12 +150,20 @@ def test_ollama_provider_sends_system_prompt(
     ]
 
 
-# Test 3:
-# Verifies that a failed connection to Ollama
-# becomes a clean JARVIS RuntimeError.
+# ---------------------------------------------------------
+# TEST 3
+# Connection failure
+# ---------------------------------------------------------
+
+
 def test_ollama_provider_handles_connection_error(
     monkeypatch,
-):
+) -> None:
+    """
+    Verify that an Ollama connection failure becomes
+    a clean RuntimeError inside JARVIS.
+    """
+
     def fake_post(
         url: str,
         *,
@@ -178,18 +197,26 @@ def test_ollama_provider_handles_connection_error(
         )
 
 
-# Test 4:
-# Verifies two important things:
-#
-# 1. JARVIS sends available tool definitions to Ollama.
-# 2. A tool call returned by Ollama is converted
-#    into our own ModelToolCall object.
-#
-# IMPORTANT:
-# This test does NOT execute the actual tool.
+# ---------------------------------------------------------
+# TEST 4
+# Tool definitions + tool-call parsing
+# ---------------------------------------------------------
+
+
 def test_ollama_provider_sends_tools_and_parses_tool_call(
     monkeypatch,
-):
+) -> None:
+    """
+    Verify two things:
+
+    1. JARVIS sends available tools to Ollama.
+    2. Ollama's tool-call response is converted into
+       JARVIS's generic ModelToolCall format.
+
+    IMPORTANT:
+    No real tool is executed here.
+    """
+
     captured_json: object | None = None
 
     def fake_post(
@@ -200,7 +227,6 @@ def test_ollama_provider_sends_tools_and_parses_tool_call(
     ) -> httpx.Response:
         nonlocal captured_json
 
-        # Capture what JARVIS sends to Ollama.
         captured_json = json
 
         del timeout
@@ -210,8 +236,8 @@ def test_ollama_provider_sends_tools_and_parses_tool_call(
             url,
         )
 
-        # Pretend that Ollama decided it wants
-        # to call the list_directory tool.
+        # Pretend Ollama decided that it needs
+        # list_directory.
         return httpx.Response(
             status_code=200,
             request=request,
@@ -268,13 +294,12 @@ def test_ollama_provider_sends_tools_and_parses_tool_call(
         )
     )
 
-    # Make sure JARVIS really sent a dictionary payload.
     assert isinstance(
         captured_json,
         dict,
     )
 
-    # Make sure the Ollama request contained tool definitions.
+    # Ensure tool definitions were really sent to Ollama.
     assert "tools" in captured_json
 
     # Ollama should have requested exactly one tool.
@@ -282,10 +307,181 @@ def test_ollama_provider_sends_tools_and_parses_tool_call(
 
     tool_call = response.tool_calls[0]
 
-    # Verify that the structured tool request
-    # was parsed correctly.
     assert tool_call.name == "list_directory"
 
     assert tool_call.arguments == {
         "path": ".",
     }
+
+
+# ---------------------------------------------------------
+# TEST 5
+# Native multi-turn tool history
+# ---------------------------------------------------------
+
+
+def test_ollama_provider_sends_native_tool_history(
+    monkeypatch,
+) -> None:
+    """
+    Verify that JARVIS sends Ollama a REAL multi-turn
+    tool conversation.
+
+    The expected flow is:
+
+        user
+          ↓
+        assistant requests tool
+          ↓
+        role="tool" contains the REAL result
+          ↓
+        model continues
+
+    This is better than rewriting tool results into
+    another fake user prompt.
+    """
+
+    captured_json: object | None = None
+
+    def fake_post(
+        url: str,
+        *,
+        json: object,
+        timeout: float,
+    ) -> httpx.Response:
+        nonlocal captured_json
+
+        captured_json = json
+
+        del timeout
+
+        request = httpx.Request(
+            "POST",
+            url,
+        )
+
+        # Pretend Ollama has now received the real tool
+        # result and produces the final answer.
+        return httpx.Response(
+            status_code=200,
+            request=request,
+            json={
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        "The workspace contains hello.txt."
+                    ),
+                }
+            },
+        )
+
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        fake_post,
+    )
+
+    provider = OllamaProvider(
+        model="test-model",
+    )
+
+    provider.generate(
+        ModelRequest(
+            prompt="What files are in my workspace?",
+            messages=[
+                # User asks a normal question.
+                ModelMessage(
+                    role="user",
+                    content=(
+                        "What files are in my workspace?"
+                    ),
+                ),
+
+                # Assistant decides to use list_directory.
+                ModelMessage(
+                    role="assistant",
+                    tool_calls=[
+                        ModelToolCall(
+                            name="list_directory",
+                            arguments={
+                                "path": ".",
+                            },
+                        )
+                    ],
+                ),
+
+                # JARVIS returns the REAL tool result.
+                ModelMessage(
+                    role="tool",
+                    tool_name="list_directory",
+                    content='["hello.txt"]',
+                ),
+            ],
+            tools=[
+                ModelToolDefinition(
+                    name="list_directory",
+                    description=(
+                        "List workspace files."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                            }
+                        },
+                    },
+                )
+            ],
+        )
+    )
+
+    assert isinstance(
+        captured_json,
+        dict,
+    )
+
+    messages = captured_json[
+        "messages"
+    ]
+
+    assert isinstance(
+        messages,
+        list,
+    )
+
+    # This is the important assertion.
+    #
+    # We want Ollama to receive the real native sequence:
+    #
+    # user
+    # assistant + tool_calls
+    # tool result
+    assert messages == [
+        {
+            "role": "user",
+            "content": (
+                "What files are in my workspace?"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "list_directory",
+                        "arguments": {
+                            "path": ".",
+                        },
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '["hello.txt"]',
+            "tool_name": "list_directory",
+        },
+    ]
