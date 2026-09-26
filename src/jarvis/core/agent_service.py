@@ -11,20 +11,22 @@ class AgentService:
     """
     Coordinates the AI model with JARVIS tools.
 
-    The model is allowed to REQUEST a tool.
+    The model is allowed to REQUEST tools.
 
-    The model never executes a tool directly.
+    The model never executes tools directly.
 
     Every requested tool still goes through:
 
-        ToolRequest
+        ModelToolCall
+            -> ToolRequest
             -> ToolService
             -> PermissionPolicy
             -> ToolExecutor
             -> Tool
 
-    This keeps the AI reasoning layer separate from
-    the trusted JARVIS execution/security layer.
+    After JARVIS receives the REAL tool result,
+    the result is sent back to the model so it can
+    produce a natural-language final answer.
     """
 
     def __init__(
@@ -43,20 +45,26 @@ class AgentService:
         """
         Process one natural-language JARVIS request.
 
-        For now there are two possible outcomes:
+        Current flow:
 
-        1. The model answers normally.
-        2. The model requests one or more tools.
-           JARVIS securely executes them and returns
-           their REAL results.
+        1. Give the model the available tools.
+        2. Let the model decide whether a tool is needed.
+        3. Execute requested tools through JARVIS security.
+        4. Collect the REAL tool results.
+        5. Send those verified results back to the model.
+        6. Return a natural-language final answer.
 
-        A later milestone will send those real tool
-        results back to the model for a polished
-        natural-language final answer.
+        This is currently a single tool round.
+
+        Multi-step agent loops will be added later.
         """
 
-        # Convert JARVIS's registered tools into the
-        # generic format that any model provider can use.
+        # -------------------------------------------------
+        # STEP 1:
+        # Convert the real registered JARVIS tools into
+        # model-independent tool definitions.
+        # -------------------------------------------------
+
         available_tools = [
             ModelToolDefinition(
                 name=tool.name,
@@ -66,7 +74,19 @@ class AgentService:
             for tool in self.tool_service.registry.tools()
         ]
 
+        # -------------------------------------------------
+        # STEP 2:
         # Ask the model what it wants to do.
+        #
+        # The model can either:
+        #
+        # A. answer normally
+        #
+        # or
+        #
+        # B. return one or more ModelToolCall objects
+        # -------------------------------------------------
+
         model_response = self.model_provider.generate(
             ModelRequest(
                 prompt=prompt,
@@ -75,40 +95,110 @@ class AgentService:
             )
         )
 
-        # If the model did not request a tool,
-        # simply return its normal conversational answer.
+        # -------------------------------------------------
+        # STEP 3:
+        # If no tool is required, simply return the
+        # model's normal conversational answer.
+        # -------------------------------------------------
+
         if not model_response.tool_calls:
             return model_response.text
 
+        # -------------------------------------------------
+        # STEP 4:
+        # Execute every requested tool through the REAL
+        # JARVIS execution/security pipeline.
+        #
+        # The AI never calls tool.execute() itself.
+        # -------------------------------------------------
+
         tool_results: list[str] = []
 
-        # The model may request one or more tools.
         for tool_call in model_response.tool_calls:
-            # Convert the AI's request into JARVIS's own
-            # trusted ToolRequest type.
+            # Convert the model's tool request into
+            # JARVIS's trusted ToolRequest format.
             request = ToolRequest(
                 tool_name=tool_call.name,
                 arguments=tool_call.arguments,
             )
 
-            # IMPORTANT:
+            # This passes through:
             #
-            # We do NOT execute the tool directly.
+            # ToolService
+            #     -> ToolRegistry
+            #     -> PermissionPolicy
+            #     -> ToolExecutor
             #
-            # ToolService sends it through the existing
-            # registry, permissions and executor system.
+            # so the AI cannot bypass permissions.
             result = self.tool_service.execute(
                 request
             )
 
-            tool_results.append(
-                self._format_tool_result(
-                    tool_call.name,
-                    result,
-                )
+            # Convert the real Python result into
+            # deterministic readable text.
+            formatted_result = self._format_tool_result(
+                tool_call.name,
+                result,
             )
 
-        return "\n\n".join(tool_results)
+            tool_results.append(
+                formatted_result
+            )
+
+        # -------------------------------------------------
+        # STEP 5:
+        # Combine all VERIFIED results.
+        # -------------------------------------------------
+
+        verified_results = "\n\n".join(
+            tool_results
+        )
+
+        # -------------------------------------------------
+        # STEP 6:
+        # Ask the model to turn ONLY the verified tool
+        # data into a natural-language answer.
+        #
+        # IMPORTANT:
+        # We do NOT provide tools on this second call.
+        #
+        # This second request is only for formatting and
+        # explaining data that JARVIS already obtained.
+        # -------------------------------------------------
+
+        final_prompt = (
+            "The user originally asked:\n"
+            f"{prompt}\n\n"
+            "JARVIS executed the required tools and "
+            "received these VERIFIED results:\n\n"
+            f"{verified_results}\n\n"
+            "Answer the user's original question using "
+            "only the verified results above. "
+            "Do not invent additional files, values, "
+            "actions, or capabilities. "
+            "Do not say that you performed an action "
+            "unless it is represented in the verified "
+            "tool results. "
+            "Keep the answer concise and natural."
+        )
+
+        final_system_prompt = (
+            "You are JARVIS, Salem's personal AI assistant. "
+            "JARVIS has already executed the necessary "
+            "authorized tools. "
+            "Your job now is only to explain the verified "
+            "tool results accurately. "
+            "Never fabricate information."
+        )
+
+        final_response = self.model_provider.generate(
+            ModelRequest(
+                prompt=final_prompt,
+                system_prompt=final_system_prompt,
+            )
+        )
+
+        return final_response.text
 
     @staticmethod
     def _format_tool_result(
@@ -116,14 +206,16 @@ class AgentService:
         result: object,
     ) -> str:
         """
-        Convert real tool results into readable text.
+        Convert a REAL JARVIS tool result into text.
 
-        This is intentionally deterministic.
+        This formatting is deterministic.
 
-        We do not ask the AI to invent or reinterpret
-        the result at this stage.
+        The AI does not participate in this step,
+        which prevents it from changing the raw data
+        before the final answer is generated.
         """
 
+        # A list is useful for directory contents.
         if isinstance(result, list):
             if not result:
                 formatted_result = "(empty)"
@@ -133,6 +225,7 @@ class AgentService:
                     for item in result
                 )
 
+        # A dictionary is useful for system information.
         elif isinstance(result, dict):
             if not result:
                 formatted_result = "(empty)"
@@ -142,10 +235,13 @@ class AgentService:
                     for key, value in result.items()
                 )
 
+        # Strings and other simple objects can simply
+        # be converted to text.
         else:
             formatted_result = str(result)
 
         return (
-            f"Tool result from {tool_name}:\n"
+            f"Tool: {tool_name}\n"
+            f"Verified result:\n"
             f"{formatted_result}"
         )

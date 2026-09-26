@@ -22,9 +22,9 @@ from jarvis.tools.service import ToolService
 
 class NormalResponseProvider(ModelProvider):
     """
-    Fake AI provider used to test normal conversation.
+    Fake model for normal conversation.
 
-    This model does not request any tool.
+    It never requests a tool.
     """
 
     name = "test"
@@ -33,7 +33,6 @@ class NormalResponseProvider(ModelProvider):
         self,
         request: ModelRequest,
     ) -> ModelResponse:
-        # The request is not needed for this simple fake model.
         del request
 
         return ModelResponse(
@@ -45,10 +44,14 @@ class NormalResponseProvider(ModelProvider):
 
 class ToolCallingProvider(ModelProvider):
     """
-    Fake AI provider that always asks JARVIS
-    to execute list_directory.
+    Fake model that behaves like a tiny agent.
 
-    The fake model itself does NOT execute anything.
+    First model call:
+        requests list_directory.
+
+    Second model call:
+        receives the REAL tool result and produces
+        the final natural-language response.
     """
 
     name = "test"
@@ -57,22 +60,46 @@ class ToolCallingProvider(ModelProvider):
         self,
         request: ModelRequest,
     ) -> ModelResponse:
-        # AgentService should have provided the model
-        # with the registered JARVIS tools.
-        assert request.tools
+        # -------------------------------------------------
+        # FIRST CALL
+        #
+        # Tools are present, so behave like the model
+        # deciding which JARVIS tool it needs.
+        # -------------------------------------------------
+
+        if request.tools:
+            return ModelResponse(
+                text="",
+                provider=self.name,
+                model="test-model",
+                tool_calls=[
+                    ModelToolCall(
+                        name="list_directory",
+                        arguments={
+                            "path": ".",
+                        },
+                    )
+                ],
+            )
+
+        # -------------------------------------------------
+        # SECOND CALL
+        #
+        # There are no tools now.
+        #
+        # The agent should have inserted the REAL result
+        # into this final request.
+        # -------------------------------------------------
+
+        assert "hello.txt" in request.prompt
 
         return ModelResponse(
-            text="",
+            text=(
+                "Your workspace contains "
+                "the file hello.txt."
+            ),
             provider=self.name,
             model="test-model",
-            tool_calls=[
-                ModelToolCall(
-                    name="list_directory",
-                    arguments={
-                        "path": ".",
-                    },
-                )
-            ],
         )
 
 
@@ -82,15 +109,14 @@ def build_tool_service(
     allow_read: bool,
 ) -> ToolService:
     """
-    Build a real JARVIS ToolService for testing.
+    Build a real JARVIS ToolService.
 
-    This deliberately uses the real:
+    These tests use the actual:
     - ToolRegistry
     - PermissionPolicy
     - ToolExecutor
 
-    so our security tests exercise the same
-    pipeline as the actual application.
+    instead of bypassing the security architecture.
     """
 
     registry = ToolRegistry()
@@ -126,8 +152,8 @@ def test_agent_returns_normal_model_response(
     tmp_path: Path,
 ) -> None:
     """
-    If the AI does not request a tool,
-    AgentService should return the normal AI response.
+    Normal conversation should still work without
+    using any tools.
     """
 
     tool_service = build_tool_service(
@@ -147,13 +173,17 @@ def test_agent_returns_normal_model_response(
     assert result == "Hello from JARVIS"
 
 
-def test_agent_executes_requested_tool(
+def test_agent_executes_tool_and_returns_final_answer(
     tmp_path: Path,
 ) -> None:
     """
-    If the AI requests list_directory,
-    JARVIS should execute the REAL registered tool
-    and return the REAL filesystem result.
+    Full agent flow:
+
+    natural language
+        -> model chooses tool
+        -> real tool executes
+        -> real result returned
+        -> model produces final answer
     """
 
     file_path = (
@@ -179,8 +209,10 @@ def test_agent_executes_requested_tool(
         "What files are in my workspace?",
     )
 
-    # The result must come from the real temporary directory.
-    assert "hello.txt" in result
+    assert result == (
+        "Your workspace contains "
+        "the file hello.txt."
+    )
 
 
 def test_agent_cannot_bypass_permission_policy(
@@ -189,12 +221,9 @@ def test_agent_cannot_bypass_permission_policy(
     """
     Security test.
 
-    Even if the AI asks for a valid tool,
-    JARVIS must reject it when the capability
+    Even though the AI requests list_directory,
+    execution must fail when READ_FILE permission
     is disabled.
-
-    This proves that the AI cannot bypass
-    PermissionPolicy.
     """
 
     tool_service = build_tool_service(
