@@ -27,6 +27,8 @@ def main() -> None:
         "READ_SYSTEM_INFO permission:",
         "enabled" if settings.allow_system_info else "disabled",
     )
+    print(f"Model provider: {settings.model_provider}")
+    print(f"Local model: {settings.ollama_model}")
     print("Type 'help' to see available commands.")
 
     while True:
@@ -42,6 +44,7 @@ def main() -> None:
         if command == "help":
             print("Available commands:")
             print("  status          Show JARVIS status")
+            print("  ask <message>   Talk to the local AI")
             print("  system          Show basic computer information")
             print("  read <file>     Read a file from the workspace")
             print("  list [folder]   List files in the workspace")
@@ -50,6 +53,29 @@ def main() -> None:
 
         if command == "status":
             print("JARVIS Core is running.")
+            continue
+
+        if command.startswith("ask "):
+            prompt = command.removeprefix("ask ").strip()
+
+            if not prompt:
+                print("Please provide a message.")
+                continue
+
+            try:
+                response = app.ask(
+                    prompt,
+                    system_prompt=(
+                        "You are JARVIS, Salem's personal AI assistant. "
+                        "Be helpful, concise, and accurate."
+                    ),
+                )
+
+                print(response.text)
+
+            except (RuntimeError, TypeError) as exc:
+                print(f"Model error: {exc}")
+
             continue
 
         if command == "system":

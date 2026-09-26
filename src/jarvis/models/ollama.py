@@ -38,10 +38,12 @@ class OllamaProvider(ModelProvider):
             response = httpx.post(
                 f"{self.base_url}/api/chat",
                 json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": False,
-                },
+    "model": self.model,
+    "messages": messages,
+    "stream": False,
+    "think": False,
+    "keep_alive": "10m",
+},
                 timeout=self.timeout,
             )
 

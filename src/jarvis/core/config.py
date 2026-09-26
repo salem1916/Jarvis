@@ -10,8 +10,13 @@ class JarvisSettings(BaseSettings):
     )
 
     workspace_dir: Path = Path("workspace")
+
     allow_read_file: bool = False
     allow_system_info: bool = False
+
+    model_provider: str = "ollama"
+    ollama_model: str = "qwen3:4b"
+    ollama_base_url: str = "http://127.0.0.1:11434"
 
 
 class _EnvJarvisSettings(JarvisSettings):
