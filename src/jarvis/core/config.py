@@ -11,6 +11,7 @@ class JarvisSettings(BaseSettings):
 
     workspace_dir: Path = Path("workspace")
     allow_read_file: bool = False
+    allow_system_info: bool = False
 
 
 class _EnvJarvisSettings(JarvisSettings):
