@@ -3,9 +3,11 @@ from jarvis.core.config import JarvisSettings
 from jarvis.security.capabilities import Capability
 from jarvis.security.policy import PermissionPolicy
 from jarvis.tools.executor import ToolExecutor
+from jarvis.tools.list_directory import ListDirectoryTool
 from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.service import ToolService
+from jarvis.tools.system_info import SystemInfoTool
 
 
 def build_application(settings: JarvisSettings) -> JarvisApplication:
@@ -14,13 +16,25 @@ def build_application(settings: JarvisSettings) -> JarvisApplication:
     if settings.allow_read_file:
         allowed_capabilities.add(Capability.READ_FILE)
 
+    if settings.allow_system_info:
+        allowed_capabilities.add(Capability.READ_SYSTEM_INFO)
+
     policy = PermissionPolicy(
         allowed=allowed_capabilities,
     )
 
     registry = ToolRegistry()
+
     registry.register(
         ReadFileTool(settings.workspace_dir),
+    )
+
+    registry.register(
+        ListDirectoryTool(settings.workspace_dir),
+    )
+
+    registry.register(
+        SystemInfoTool(),
     )
 
     executor = ToolExecutor(policy)
