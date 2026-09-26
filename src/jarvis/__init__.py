@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from jarvis!")
+from jarvis.cli import main
+
+__all__ = ["main"]

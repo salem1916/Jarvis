@@ -39,6 +39,7 @@ def test_application_blocks_file_read_by_default(
 
     settings = JarvisSettings(
         workspace_dir=tmp_path,
+        allow_read_file=False,
     )
 
     app = build_application(settings)
