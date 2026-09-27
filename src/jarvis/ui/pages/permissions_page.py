@@ -478,7 +478,10 @@ class PermissionsPage(QWidget):
             request graceful close
 
         TYPE_TEXT
-            enter literal text into a resolved visible window
+            type literal text
+
+        KEYBOARD_ACTION
+            perform predefined trusted shortcuts/actions
 
         RUN_COMMAND
             still disabled
@@ -518,10 +521,11 @@ class PermissionsPage(QWidget):
         )
 
         explanation = QLabel(
-            "Launching, window control, closing applications, "
-            "and typing text are independent permissions. "
-            "Typing supports literal text only and does not "
-            "grant arbitrary keyboard shortcuts or commands."
+            "Application launching, window control, closing, "
+            "literal typing, and keyboard shortcuts are separate "
+            "permissions. Keyboard actions are limited to a "
+            "trusted allowlist such as Save, Copy, Paste, Enter, "
+            "and Escape."
         )
 
         explanation.setWordWrap(
@@ -662,6 +666,30 @@ class PermissionsPage(QWidget):
         )
 
         # -------------------------------------------------
+        # KEYBOARD ACTIONS
+        # -------------------------------------------------
+
+        self.keyboard_action_mode_combo = (
+            self._build_permission_mode_combo(
+                Capability.KEYBOARD_ACTION
+            )
+        )
+
+        grid.addWidget(
+            QLabel(
+                "Keyboard actions"
+            ),
+            5,
+            0,
+        )
+
+        grid.addWidget(
+            self.keyboard_action_mode_combo,
+            5,
+            1,
+        )
+
+        # -------------------------------------------------
         # RUN COMMAND
         # -------------------------------------------------
 
@@ -669,7 +697,7 @@ class PermissionsPage(QWidget):
             QLabel(
                 "Run commands"
             ),
-            5,
+            6,
             0,
         )
 
@@ -679,7 +707,7 @@ class PermissionsPage(QWidget):
                     Capability.RUN_COMMAND
                 )
             ),
-            5,
+            6,
             1,
         )
 
@@ -860,7 +888,7 @@ class PermissionsPage(QWidget):
                 "JARVIS will be able to focus, minimize, "
                 "maximize, and restore visible windows without "
                 "asking each time.\n\n"
-                "Closing applications and typing remain "
+                "Closing, typing, and keyboard shortcuts remain "
                 "separate permissions.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
@@ -871,8 +899,7 @@ class PermissionsPage(QWidget):
                 f'You are about to set "{action_name}" to '
                 "automatic execution.\n\n"
                 "JARVIS will be able to send normal Windows "
-                "close requests to visible applications without "
-                "asking each time.\n\n"
+                "close requests without asking each time.\n\n"
                 "Applications may still show Save or confirmation "
                 "dialogs. This does not enable force killing.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
@@ -887,8 +914,22 @@ class PermissionsPage(QWidget):
                 "resolved visible application windows without "
                 "asking each time.\n\n"
                 "This can modify documents, source code, forms, "
-                "or messages. Arbitrary hotkeys and command "
-                "execution are still NOT enabled.\n\n"
+                "or messages.\n\n"
+                "Keyboard shortcuts remain separately controlled.\n\n"
+                "This setting survives JARVIS restarts.\n\n"
+                "Continue?"
+            )
+
+        if capability is Capability.KEYBOARD_ACTION:
+            return (
+                f'You are about to set "{action_name}" to '
+                "automatic execution.\n\n"
+                "JARVIS will be able to perform its predefined "
+                "keyboard actions without asking each time.\n\n"
+                "Examples include Save, Copy, Paste, Select All, "
+                "Undo, Redo, Enter, Escape, and Tab.\n\n"
+                "The AI still cannot invent arbitrary key "
+                "combinations through this tool.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
             )
@@ -948,6 +989,9 @@ class PermissionsPage(QWidget):
 
             Capability.TYPE_TEXT:
                 "Type text",
+
+            Capability.KEYBOARD_ACTION:
+                "Keyboard actions",
         }
 
         return names.get(
