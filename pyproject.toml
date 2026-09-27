@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "pyside6>=6.11.2",
+    "send2trash>=2.1.0",
 ]
 
 [project.scripts]

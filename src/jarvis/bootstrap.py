@@ -14,13 +14,15 @@ from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.service import ToolService
 from jarvis.tools.system_info import SystemInfoTool
+from jarvis.tools.trash_file import TrashFileTool
+from jarvis.tools.write_file import WriteFileTool
 
 
 def build_model_provider(
     settings: JarvisSettings,
 ) -> ModelProvider:
     """
-    Build the configured model backend.
+    Build the configured AI model backend.
     """
 
     if settings.model_provider == "ollama":
@@ -40,10 +42,15 @@ def build_application(
 ) -> JarvisApplication:
     """
     Assemble the complete JARVIS runtime.
+
+    Read-only operations may run automatically.
+
+    Side-effect operations such as writing and deleting
+    require explicit human confirmation.
     """
 
     # =================================================
-    # CAPABILITY POLICY
+    # AUTOMATIC CAPABILITIES
     # =================================================
 
     allowed_capabilities: set[Capability] = {
@@ -60,8 +67,18 @@ def build_application(
             Capability.READ_SYSTEM_INFO
         )
 
+    # =================================================
+    # HUMAN-CONFIRMED CAPABILITIES
+    # =================================================
+
+    confirmation_capabilities: set[Capability] = {
+        Capability.WRITE_FILE,
+        Capability.DELETE_FILE,
+    }
+
     permission_policy = PermissionPolicy(
         allowed=allowed_capabilities,
+        require_confirmation=confirmation_capabilities,
     )
 
     # =================================================
@@ -86,7 +103,7 @@ def build_application(
     )
 
     # =================================================
-    # TOOL REGISTRY
+    # TOOLS
     # =================================================
 
     registry = ToolRegistry()
@@ -106,6 +123,20 @@ def build_application(
 
     registry.register(
         ListDirectoryTool(
+            settings.workspace_dir,
+            scope_policy=filesystem_scope_policy,
+        )
+    )
+
+    registry.register(
+        WriteFileTool(
+            settings.workspace_dir,
+            scope_policy=filesystem_scope_policy,
+        )
+    )
+
+    registry.register(
+        TrashFileTool(
             settings.workspace_dir,
             scope_policy=filesystem_scope_policy,
         )
@@ -139,10 +170,6 @@ def build_application(
     model_provider = build_model_provider(
         settings
     )
-
-    # =================================================
-    # APPLICATION
-    # =================================================
 
     return JarvisApplication(
         tool_service=tool_service,

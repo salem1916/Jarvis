@@ -1,5 +1,9 @@
+import json
+import threading
+
 from PySide6.QtCore import (
     QObject,
+    Qt,
     QThread,
     Signal,
 )
@@ -7,12 +11,16 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from jarvis.core.action_confirmation import (
+    ActionConfirmationRequest,
+)
 from jarvis.core.application import JarvisApplication
 
 
@@ -20,24 +28,30 @@ class AskWorker(QObject):
     """
     Execute one JARVIS request outside the GUI thread.
 
-    Ollama/model inference can take several seconds.
+    The worker ALSO acts as the trusted confirmation handler.
 
-    Running it directly inside the Qt main thread would
-    freeze the user interface.
+    Important:
 
-    Therefore:
+        Agent runs in worker thread
+                ↓
+        action requires confirmation
+                ↓
+        worker emits confirmation_requested
+                ↓
+        GUI thread shows dialog
+                ↓
+        user chooses Approve / Deny
+                ↓
+        worker continues
 
-        ChatPage
-            ↓
-        QThread
-            ↓
-        AskWorker
-            ↓
-        JarvisApplication
+    The model never receives direct control over the result.
     """
 
     finished = Signal(str)
     failed = Signal(str)
+
+    # Carries ActionConfirmationRequest to the GUI thread.
+    confirmation_requested = Signal(object)
 
     def __init__(
         self,
@@ -51,6 +65,12 @@ class AskWorker(QObject):
         self.prompt = prompt
         self.system_prompt = system_prompt
 
+        # Python threading.Event is used because the model
+        # worker must wait while the GUI remains responsive.
+        self._confirmation_event = threading.Event()
+
+        self._confirmation_result = False
+
     def run(self) -> None:
         """
         Send the request through the real JARVIS core.
@@ -60,13 +80,12 @@ class AskWorker(QObject):
             response = self.jarvis.ask_with_tools(
                 prompt=self.prompt,
                 system_prompt=self.system_prompt,
+
+                # This AskWorker implements confirm().
+                confirmation_handler=self,
             )
 
         except Exception as exc:  # noqa: BLE001
-            # UI v0.2 still uses a general error boundary.
-            #
-            # Later we will expose structured error types
-            # to the desktop interface.
             self.failed.emit(
                 str(exc)
             )
@@ -77,15 +96,55 @@ class AskWorker(QObject):
             response
         )
 
+    def confirm(
+        self,
+        request: ActionConfirmationRequest,
+    ) -> bool:
+        """
+        Called by AgentService from the worker thread.
+
+        We cannot open Qt dialogs here.
+
+        Instead we notify the GUI thread and wait for its
+        explicit human decision.
+        """
+
+        self._confirmation_result = False
+
+        self._confirmation_event.clear()
+
+        self.confirmation_requested.emit(
+            request
+        )
+
+        # This blocks ONLY the AI worker thread.
+        #
+        # The Qt GUI event loop remains responsive.
+        self._confirmation_event.wait()
+
+        return self._confirmation_result
+
+    def resolve_confirmation(
+        self,
+        approved: bool,
+    ) -> None:
+        """
+        Called by the GUI after the human makes a decision.
+        """
+
+        self._confirmation_result = approved
+
+        self._confirmation_event.set()
+
 
 class ChatPage(QWidget):
     """
-    Main conversational page.
+    Main conversational JARVIS page.
 
-    This page owns only presentation and interaction.
-
-    Conversation state still belongs to
+    Conversation and tool state remain inside
     JarvisApplication.
+
+    This class handles desktop presentation and interaction.
     """
 
     message_count_changed = Signal(int)
@@ -110,7 +169,7 @@ class ChatPage(QWidget):
 
     def _build_interface(self) -> None:
         """
-        Build the conversation page.
+        Build the chat page.
         """
 
         layout = QVBoxLayout(
@@ -152,14 +211,9 @@ class ChatPage(QWidget):
             subtitle
         )
 
-        # -------------------------------------------------
-        # Chat history
-        #
-        # Plain text is intentional.
-        #
-        # User/model output must not be interpreted as
-        # arbitrary HTML.
-        # -------------------------------------------------
+        # =================================================
+        # CHAT HISTORY
+        # =================================================
 
         self.chat_view = QPlainTextEdit()
 
@@ -176,9 +230,9 @@ class ChatPage(QWidget):
             stretch=1,
         )
 
-        # -------------------------------------------------
-        # Message input
-        # -------------------------------------------------
+        # =================================================
+        # MESSAGE INPUT
+        # =================================================
 
         input_container = QWidget()
 
@@ -244,7 +298,7 @@ class ChatPage(QWidget):
 
     def _send_message(self) -> None:
         """
-        Send the current input to the real JARVIS agent.
+        Send the current message through JARVIS.
         """
 
         if self.request_in_progress:
@@ -266,9 +320,9 @@ class ChatPage(QWidget):
             True
         )
 
-        # -------------------------------------------------
-        # Create one worker/thread for this request.
-        # -------------------------------------------------
+        # =================================================
+        # BACKGROUND AGENT THREAD
+        # =================================================
 
         thread = QThread()
 
@@ -297,6 +351,15 @@ class ChatPage(QWidget):
             self._handle_error
         )
 
+        # -------------------------------------------------
+        # Confirmation requests cross from the worker
+        # thread into the Qt GUI thread here.
+        # -------------------------------------------------
+
+        worker.confirmation_requested.connect(
+            self._handle_confirmation_request
+        )
+
         worker.finished.connect(
             thread.quit
         )
@@ -323,13 +386,172 @@ class ChatPage(QWidget):
 
         thread.start()
 
+    def _handle_confirmation_request(
+        self,
+        raw_request: object,
+    ) -> None:
+        """
+        Show a human approval dialog on the GUI thread.
+
+        The action does NOT execute until this method sends
+        the user's decision back to AskWorker.
+        """
+
+        if not isinstance(
+            raw_request,
+            ActionConfirmationRequest,
+        ):
+            if self.worker is not None:
+                self.worker.resolve_confirmation(
+                    False
+                )
+
+            return
+
+        request = raw_request
+
+        arguments = dict(
+            request.arguments
+        )
+
+        # -------------------------------------------------
+        # Human-friendly summary
+        # -------------------------------------------------
+
+        summary_lines = [
+            "JARVIS wants permission to perform an action.",
+            "",
+            f"Tool: {request.tool_name}",
+            f"Capability: {request.capability}",
+        ]
+
+        if request.tool_name == "write_file":
+            path = arguments.get(
+                "path",
+                "<unknown>"
+            )
+
+            overwrite = arguments.get(
+                "overwrite",
+                False,
+            )
+
+            content = arguments.get(
+                "content",
+                ""
+            )
+
+            mode = (
+                "Overwrite existing file if present"
+                if overwrite
+                else "Create new file only"
+            )
+
+            preview = (
+                content
+                if isinstance(
+                    content,
+                    str,
+                )
+                else str(
+                    content
+                )
+            )
+
+            # Keep the main dialog readable.
+            #
+            # The FULL arguments remain available under
+            # "Show Details".
+            if len(
+                preview
+            ) > 700:
+                preview = (
+                    preview[:700]
+                    + "\n...[preview truncated]"
+                )
+
+            summary_lines.extend(
+                [
+                    "",
+                    f"Path: {path}",
+                    f"Mode: {mode}",
+                    "",
+                    "Content preview:",
+                    preview,
+                ]
+            )
+
+        message_box = QMessageBox(
+            self
+        )
+
+        message_box.setWindowTitle(
+            "Approve JARVIS Action"
+        )
+
+        # Never interpret model/tool arguments as rich HTML.
+        message_box.setTextFormat(
+            Qt.TextFormat.PlainText
+        )
+
+        message_box.setText(
+            "\n".join(
+                summary_lines
+            )
+        )
+
+        # Full exact tool arguments are available to inspect.
+        message_box.setDetailedText(
+            json.dumps(
+                arguments,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+
+        message_box.setIcon(
+            QMessageBox.Icon.Warning
+        )
+
+        message_box.setStandardButtons(
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+        )
+
+        message_box.setButtonText(
+            QMessageBox.StandardButton.Yes,
+            "Approve Once",
+        )
+
+        message_box.setButtonText(
+            QMessageBox.StandardButton.No,
+            "Deny",
+        )
+
+        message_box.setDefaultButton(
+            QMessageBox.StandardButton.No
+        )
+
+        result = message_box.exec()
+
+        approved = (
+            result
+            == QMessageBox.StandardButton.Yes
+        )
+
+        if self.worker is not None:
+            self.worker.resolve_confirmation(
+                approved
+            )
+
     def _append_message(
         self,
         speaker: str,
         message: str,
     ) -> None:
         """
-        Append a plain-text conversation message.
+        Add one plain-text chat message.
         """
 
         self.chat_view.appendPlainText(
@@ -355,7 +577,7 @@ class ChatPage(QWidget):
         response: str,
     ) -> None:
         """
-        Display a successful model response.
+        Display a successful JARVIS response.
         """
 
         self._append_message(
@@ -376,7 +598,7 @@ class ChatPage(QWidget):
         error: str,
     ) -> None:
         """
-        Display a recoverable application error.
+        Display an application error without crashing Qt.
         """
 
         self._append_message(
@@ -393,7 +615,7 @@ class ChatPage(QWidget):
         busy: bool,
     ) -> None:
         """
-        Update controls while a request is running.
+        Update UI controls while JARVIS is working.
         """
 
         self.request_in_progress = busy
@@ -422,10 +644,12 @@ class ChatPage(QWidget):
             busy
         )
 
-    def start_new_conversation(self) -> None:
+    def start_new_conversation(
+        self,
+    ) -> None:
         """
-        Reset both the real conversation state
-        and visible chat.
+        Reset conversation history without changing
+        permissions.
         """
 
         if self.request_in_progress:
@@ -445,9 +669,11 @@ class ChatPage(QWidget):
 
         self.input_box.setFocus()
 
-    def _clear_worker_references(self) -> None:
+    def _clear_worker_references(
+        self,
+    ) -> None:
         """
-        Release references after the QThread has stopped.
+        Release worker references after the thread exits.
         """
 
         self.worker = None
