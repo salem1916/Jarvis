@@ -15,6 +15,7 @@ from jarvis.tools.calculator import CalculatorTool
 from jarvis.tools.executor import ToolExecutor
 from jarvis.tools.list_directory import ListDirectoryTool
 from jarvis.tools.list_filesystem_scopes import ListFilesystemScopesTool
+from jarvis.tools.open_application import OpenApplicationTool
 from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.service import ToolService
@@ -28,10 +29,6 @@ def build_model_provider(
 ) -> ModelProvider:
     """
     Build the configured AI model backend.
-
-    The rest of JARVIS communicates through ModelProvider,
-    so Ollama can later be replaced or joined by other
-    providers without changing the entire application.
     """
 
     if settings.model_provider == "ollama":
@@ -51,38 +48,13 @@ def build_application(
 ) -> JarvisApplication:
     """
     Assemble the complete JARVIS runtime.
-
-    This is the application's composition root.
-
-    It connects:
-
-        configuration
-            ↓
-        permission modes
-            ↓
-        PermissionPolicy
-            ↓
-        filesystem scopes
-            ↓
-        tools
-            ↓
-        ToolExecutor / ToolService
-            ↓
-        AI model provider
-            ↓
-        JarvisApplication
     """
 
     # =================================================
     # BASE AUTOMATIC CAPABILITIES
     # =================================================
-    #
-    # These capabilities are automatically allowed
-    # depending on JARVIS configuration.
-    # =================================================
 
     allowed_capabilities: set[Capability] = {
-        # Pure deterministic local calculation.
         Capability.CALCULATE,
     }
 
@@ -97,20 +69,14 @@ def build_application(
         )
 
     # =================================================
-    # USER-CONFIGURABLE SIDE-EFFECT PERMISSIONS
+    # USER-CONFIGURABLE SIDE-EFFECT CAPABILITIES
     # =================================================
     #
     # Safe defaults:
     #
-    #     WRITE_FILE  -> Ask every time
-    #     DELETE_FILE -> Ask every time
-    #
-    # Later the user may choose:
-    #
-    #     DENY
-    #     ASK
-    #     ALLOW_SESSION
-    #     ALWAYS_ALLOW
+    #     WRITE_FILE       -> Ask
+    #     DELETE_FILE      -> Ask
+    #     OPEN_APPLICATION -> Ask
     # =================================================
 
     default_modes: dict[
@@ -122,11 +88,14 @@ def build_application(
 
         Capability.DELETE_FILE:
             PermissionMode.ASK,
+
+        Capability.OPEN_APPLICATION:
+            PermissionMode.ASK,
     }
 
-    # -------------------------------------------------
-    # Optional persistent permission-mode storage.
-    # -------------------------------------------------
+    # =================================================
+    # PERSISTED PERMISSION MODES
+    # =================================================
 
     permission_mode_store: PermissionModeStore | None = None
 
@@ -143,13 +112,6 @@ def build_application(
 
         persisted_modes = permission_mode_store.load()
 
-    # -------------------------------------------------
-    # Merge defaults with persisted user choices.
-    #
-    # Only capabilities that JARVIS currently exposes as
-    # configurable are accepted here.
-    # -------------------------------------------------
-
     permission_modes: dict[
         Capability,
         PermissionMode,
@@ -163,16 +125,9 @@ def build_application(
         },
     }
 
-    # Capabilities that currently require explicit
-    # human confirmation.
     confirmation_capabilities: set[
         Capability
     ] = set()
-
-    # -------------------------------------------------
-    # Convert human-facing PermissionMode values into
-    # low-level PermissionPolicy decisions.
-    # -------------------------------------------------
 
     for capability, mode in permission_modes.items():
         decision = mode.to_decision()
@@ -190,14 +145,8 @@ def build_application(
                 capability
             )
 
-        # PermissionDecision.DENY requires no set membership.
-        #
-        # PermissionPolicy defaults to DENY when a capability
-        # is in neither allowed_capabilities nor
-        # confirmation_capabilities.
-
     # =================================================
-    # CAPABILITY SECURITY POLICY
+    # CAPABILITY POLICY
     # =================================================
 
     permission_policy = PermissionPolicy(
@@ -207,17 +156,6 @@ def build_application(
 
     # =================================================
     # FILESYSTEM SCOPES
-    # =================================================
-    #
-    # Capability answers:
-    #
-    #     "May JARVIS read/write/delete?"
-    #
-    # FilesystemScopePolicy answers:
-    #
-    #     "WHERE may JARVIS operate?"
-    #
-    # Both layers are required.
     # =================================================
 
     filesystem_scope_store: FilesystemScopeStore | None = None
@@ -254,7 +192,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Read-only filesystem tools
+    # Filesystem tools
     # -------------------------------------------------
 
     registry.register(
@@ -271,13 +209,6 @@ def build_application(
         )
     )
 
-    # -------------------------------------------------
-    # Side-effect filesystem tools
-    #
-    # WRITE_FILE and DELETE_FILE are protected by the
-    # PermissionPolicy configured above.
-    # -------------------------------------------------
-
     registry.register(
         WriteFileTool(
             settings.workspace_dir,
@@ -293,7 +224,15 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Other tools
+    # Application control
+    # -------------------------------------------------
+
+    registry.register(
+        OpenApplicationTool()
+    )
+
+    # -------------------------------------------------
+    # Deterministic utility tools
     # -------------------------------------------------
 
     registry.register(
@@ -305,7 +244,7 @@ def build_application(
     )
 
     # =================================================
-    # SECURE TOOL EXECUTION
+    # SECURE EXECUTION
     # =================================================
 
     executor = ToolExecutor(
@@ -318,7 +257,7 @@ def build_application(
     )
 
     # =================================================
-    # AI MODEL BACKEND
+    # AI MODEL
     # =================================================
 
     model_provider = build_model_provider(
@@ -326,7 +265,7 @@ def build_application(
     )
 
     # =================================================
-    # FINAL APPLICATION
+    # APPLICATION
     # =================================================
 
     return JarvisApplication(
