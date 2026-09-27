@@ -6,6 +6,10 @@ from jarvis.models.base import (
     ModelRequest,
     ModelResponse,
 )
+from jarvis.security.capabilities import Capability
+from jarvis.security.policy import (
+    PermissionDecision,
+)
 from jarvis.tools.service import ToolService
 
 
@@ -16,11 +20,11 @@ class JarvisApplication:
     Interfaces such as:
 
     - CLI
-    - future desktop UI
+    - desktop UI
     - future mobile/dashboard interfaces
 
-    should communicate with this class instead of
-    directly controlling tools or model providers.
+    communicate with this class instead of directly
+    controlling models, tools, or security internals.
     """
 
     def __init__(
@@ -36,10 +40,12 @@ class JarvisApplication:
             tool_service=tool_service,
         )
 
-        # Current active chat session.
+        # Current active conversation.
         #
-        # Later we will support several conversations
-        # identified by IDs and persisted in PostgreSQL.
+        # This is in-memory for now.
+        #
+        # Later conversations will receive IDs and
+        # become persistent in PostgreSQL.
         self.conversation = Conversation()
 
     def execute_tool(
@@ -63,8 +69,8 @@ class JarvisApplication:
         """
         Perform a simple stateless model request.
 
-        This remains available for internal operations
-        that do not require agent tools or chat history.
+        This is useful for internal operations that
+        do not require tools or conversation history.
         """
 
         request = ModelRequest(
@@ -85,6 +91,7 @@ class JarvisApplication:
         Main conversational JARVIS path.
 
         This uses:
+
         - conversation history
         - AI reasoning
         - tool calling
@@ -100,18 +107,38 @@ class JarvisApplication:
 
     def new_conversation(self) -> None:
         """
-        Clear the current in-memory chat and start fresh.
+        Clear the current in-memory conversation.
         """
 
         self.conversation.clear()
 
     def conversation_message_count(self) -> int:
         """
-        Number of messages in the current chat.
+        Return the number of internal messages in
+        the current conversation.
 
-        Mostly useful for debugging and status displays.
+        Tool messages are included.
         """
 
         return len(
             self.conversation
+        )
+
+    def permission_decision(
+        self,
+        capability: Capability,
+    ) -> PermissionDecision:
+        """
+        Query JARVIS's real security policy.
+
+        The desktop UI uses this method to display
+        permission state without reaching directly
+        into ToolExecutor internals.
+
+        This keeps the UI dependent on the application
+        facade rather than security implementation details.
+        """
+
+        return self.tool_service.executor.policy.evaluate(
+            capability
         )

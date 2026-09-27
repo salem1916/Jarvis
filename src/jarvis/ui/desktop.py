@@ -1,105 +1,56 @@
 import sys
 
-from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
-    QPlainTextEdit,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from jarvis.bootstrap import build_application
-from jarvis.core.application import JarvisApplication
-from jarvis.core.config import JarvisSettings, load_settings
+from jarvis.core.config import (
+    JarvisSettings,
+    load_settings,
+)
 from jarvis.core.system_prompt import build_system_prompt
-
-
-class AskWorker(QObject):
-    """
-    Run one JARVIS request in a background thread.
-
-    Ollama inference may take several seconds.
-
-    If we called the model directly from the Qt GUI thread,
-    the entire desktop window would freeze until the model
-    finished responding.
-
-    Instead:
-
-        GUI thread
-            ↓
-        AskWorker
-            ↓
-        background QThread
-            ↓
-        JarvisApplication
-    """
-
-    finished = Signal(str)
-    failed = Signal(str)
-
-    def __init__(
-        self,
-        app: JarvisApplication,
-        prompt: str,
-        system_prompt: str,
-    ) -> None:
-        super().__init__()
-
-        self.app = app
-        self.prompt = prompt
-        self.system_prompt = system_prompt
-
-    def run(self) -> None:
-        """
-        Send the user's request through the real JARVIS core.
-        """
-
-        try:
-            result = self.app.ask_with_tools(
-                prompt=self.prompt,
-                system_prompt=self.system_prompt,
-            )
-
-        except Exception as exc:  # noqa: BLE001
-            # Desktop UI v0.1 keeps error handling simple.
-            #
-            # Later we will introduce structured application
-            # errors and dedicated UI error messages.
-            self.failed.emit(
-                str(exc)
-            )
-
-            return
-
-        self.finished.emit(
-            result
-        )
+from jarvis.ui.pages.chat_page import ChatPage
+from jarvis.ui.pages.permissions_page import PermissionsPage
+from jarvis.ui.pages.placeholder_page import PlaceholderPage
+from jarvis.ui.theme import APP_STYLESHEET
 
 
 class JarvisWindow(QMainWindow):
     """
-    First real JARVIS desktop application.
+    Main JARVIS desktop shell.
 
-    This window is only an interface.
+    Responsibilities:
 
-    It does NOT contain model logic, tool logic,
-    permission logic, or conversation logic.
+    - application navigation
+    - shared sidebar
+    - page container
+    - top-level window lifecycle
 
-    Those remain inside the existing JARVIS core.
+    Feature-specific UI belongs inside individual pages.
     """
+
+    CHAT_PAGE = 0
+    TASKS_PAGE = 1
+    PERMISSIONS_PAGE = 2
+    MODELS_PAGE = 3
+    SETTINGS_PAGE = 4
+    LOGS_PAGE = 5
 
     def __init__(self) -> None:
         super().__init__()
 
         # -------------------------------------------------
-        # Load JARVIS configuration.
+        # Build the real JARVIS application.
         # -------------------------------------------------
 
         self.settings: JarvisSettings = load_settings()
@@ -108,10 +59,6 @@ class JarvisWindow(QMainWindow):
             parents=True,
             exist_ok=True,
         )
-
-        # -------------------------------------------------
-        # Build the SAME JarvisApplication used by the CLI.
-        # -------------------------------------------------
 
         self.jarvis = build_application(
             self.settings
@@ -122,15 +69,6 @@ class JarvisWindow(QMainWindow):
         )
 
         # -------------------------------------------------
-        # Background request state.
-        # -------------------------------------------------
-
-        self.worker_thread: QThread | None = None
-        self.worker: AskWorker | None = None
-
-        self.request_in_progress = False
-
-        # -------------------------------------------------
         # Window configuration.
         # -------------------------------------------------
 
@@ -139,43 +77,34 @@ class JarvisWindow(QMainWindow):
         )
 
         self.resize(
-            1100,
-            720,
+            1180,
+            760,
         )
 
         self.setMinimumSize(
-            820,
-            560,
+            900,
+            600,
+        )
+
+        self.setStyleSheet(
+            APP_STYLESHEET
         )
 
         self._build_interface()
-        self._apply_style()
 
     def _build_interface(self) -> None:
         """
-        Build the initial JARVIS layout.
-
-        Structure:
-
-            ┌──────────────┬─────────────────────────┐
-            │ Sidebar      │ Conversation            │
-            │              │                         │
-            │ New Chat     │ Messages                │
-            │ Model        │                         │
-            │ Provider     │                         │
-            │              │                         │
-            │ Status       │ Input            Send   │
-            └──────────────┴─────────────────────────┘
+        Build the desktop shell and navigation.
         """
 
-        central_widget = QWidget()
+        central = QWidget()
 
         self.setCentralWidget(
-            central_widget
+            central
         )
 
         root_layout = QHBoxLayout(
-            central_widget
+            central
         )
 
         root_layout.setContentsMargins(
@@ -200,7 +129,7 @@ class JarvisWindow(QMainWindow):
         )
 
         sidebar.setFixedWidth(
-            220
+            230
         )
 
         sidebar_layout = QVBoxLayout(
@@ -215,37 +144,19 @@ class JarvisWindow(QMainWindow):
         )
 
         sidebar_layout.setSpacing(
-            14
+            8
         )
 
-        # -------------------------------------------------
-        # JARVIS title
-        # -------------------------------------------------
-
-        title = QLabel(
+        brand = QLabel(
             "JARVIS"
         )
 
-        title.setObjectName(
-            "jarvisTitle"
-        )
-
-        title_font = QFont()
-
-        title_font.setPointSize(
-            22
-        )
-
-        title_font.setBold(
-            True
-        )
-
-        title.setFont(
-            title_font
+        brand.setObjectName(
+            "brandTitle"
         )
 
         sidebar_layout.addWidget(
-            title
+            brand
         )
 
         subtitle = QLabel(
@@ -260,56 +171,119 @@ class JarvisWindow(QMainWindow):
             subtitle
         )
 
+        sidebar_layout.addSpacing(
+            12
+        )
+
         # -------------------------------------------------
-        # New conversation button
+        # New chat
         # -------------------------------------------------
 
         self.new_chat_button = QPushButton(
-            "New Chat"
+            "+ New Chat"
         )
 
         self.new_chat_button.clicked.connect(
-            self._start_new_conversation
+            self._start_new_chat
         )
 
         sidebar_layout.addWidget(
             self.new_chat_button
         )
 
+        sidebar_layout.addSpacing(
+            12
+        )
+
         # -------------------------------------------------
-        # Model information
+        # Navigation
         # -------------------------------------------------
 
-        model_title = QLabel(
+        self.navigation_group = QButtonGroup(
+            self
+        )
+
+        self.navigation_group.setExclusive(
+            True
+        )
+
+        self._add_navigation_button(
+            sidebar_layout,
+            "Chat",
+            self.CHAT_PAGE,
+            checked=True,
+        )
+
+        self._add_navigation_button(
+            sidebar_layout,
+            "Tasks",
+            self.TASKS_PAGE,
+        )
+
+        self._add_navigation_button(
+            sidebar_layout,
+            "Permissions",
+            self.PERMISSIONS_PAGE,
+        )
+
+        self._add_navigation_button(
+            sidebar_layout,
+            "Models",
+            self.MODELS_PAGE,
+        )
+
+        self._add_navigation_button(
+            sidebar_layout,
+            "Settings",
+            self.SETTINGS_PAGE,
+        )
+
+        self._add_navigation_button(
+            sidebar_layout,
+            "Logs",
+            self.LOGS_PAGE,
+        )
+
+        self.navigation_group.idClicked.connect(
+            self._navigate_to
+        )
+
+        sidebar_layout.addStretch()
+
+        # -------------------------------------------------
+        # Runtime information
+        # -------------------------------------------------
+
+        model_heading = QLabel(
             "MODEL"
         )
 
-        model_title.setObjectName(
+        model_heading.setObjectName(
             "sectionTitle"
         )
 
         sidebar_layout.addWidget(
-            model_title
+            model_heading
         )
 
-        self.model_label = QLabel(
+        model_label = QLabel(
             self.settings.ollama_model
         )
 
         sidebar_layout.addWidget(
-            self.model_label
+            model_label
         )
 
-        provider_title = QLabel(
+        provider_heading = QLabel(
             "PROVIDER"
         )
 
-        provider_title.setObjectName(
+        provider_heading.setObjectName(
             "sectionTitle"
         )
 
         sidebar_layout.addWidget(
-            provider_title
+            provider_heading
         )
 
         provider_label = QLabel(
@@ -319,13 +293,6 @@ class JarvisWindow(QMainWindow):
         sidebar_layout.addWidget(
             provider_label
         )
-
-        # Fill the empty sidebar space.
-        sidebar_layout.addStretch()
-
-        # -------------------------------------------------
-        # Conversation information
-        # -------------------------------------------------
 
         self.message_count_label = QLabel(
             "Messages: 0"
@@ -339,16 +306,16 @@ class JarvisWindow(QMainWindow):
             self.message_count_label
         )
 
-        core_status = QLabel(
-            "JARVIS Core v0.1\nLocal-first"
+        version = QLabel(
+            "JARVIS Core v0.1"
         )
 
-        core_status.setObjectName(
+        version.setObjectName(
             "mutedText"
         )
 
         sidebar_layout.addWidget(
-            core_status
+            version
         )
 
         root_layout.addWidget(
@@ -356,493 +323,212 @@ class JarvisWindow(QMainWindow):
         )
 
         # =================================================
-        # CHAT AREA
+        # APPLICATION PAGES
         # =================================================
 
-        chat_container = QWidget()
+        self.pages = QStackedWidget()
 
-        chat_container.setObjectName(
-            "chatContainer"
+        self.pages.setObjectName(
+            "pageStack"
         )
 
-        chat_layout = QVBoxLayout(
-            chat_container
-        )
-
-        chat_layout.setContentsMargins(
-            20,
-            20,
-            20,
-            20,
-        )
-
-        chat_layout.setSpacing(
-            12
-        )
-
-        # -------------------------------------------------
-        # Conversation heading
-        # -------------------------------------------------
-
-        conversation_title = QLabel(
-            "Conversation"
-        )
-
-        conversation_font = QFont()
-
-        conversation_font.setPointSize(
-            15
-        )
-
-        conversation_font.setBold(
-            True
-        )
-
-        conversation_title.setFont(
-            conversation_font
-        )
-
-        chat_layout.addWidget(
-            conversation_title
-        )
-
-        # -------------------------------------------------
-        # Chat history display
-        #
-        # QPlainTextEdit intentionally uses plain text.
-        #
-        # We do not interpret model/user output as HTML.
-        # -------------------------------------------------
-
-        self.chat_view = QPlainTextEdit()
-
-        self.chat_view.setReadOnly(
-            True
-        )
-
-        self.chat_view.setPlaceholderText(
-            "Start a conversation with JARVIS."
-        )
-
-        chat_layout.addWidget(
-            self.chat_view,
-            stretch=1,
-        )
-
-        # -------------------------------------------------
-        # Input row
-        # -------------------------------------------------
-
-        input_container = QWidget()
-
-        input_layout = QHBoxLayout(
-            input_container
-        )
-
-        input_layout.setContentsMargins(
-            0,
-            0,
-            0,
-            0,
-        )
-
-        input_layout.setSpacing(
-            10
-        )
-
-        self.input_box = QLineEdit()
-
-        self.input_box.setPlaceholderText(
-            "Ask JARVIS..."
-        )
-
-        # Pressing Enter performs the same action
-        # as clicking Send.
-        self.input_box.returnPressed.connect(
-            self._send_message
-        )
-
-        input_layout.addWidget(
-            self.input_box,
-            stretch=1,
-        )
-
-        self.send_button = QPushButton(
-            "Send"
-        )
-
-        self.send_button.clicked.connect(
-            self._send_message
-        )
-
-        input_layout.addWidget(
-            self.send_button
-        )
-
-        chat_layout.addWidget(
-            input_container
-        )
-
-        # -------------------------------------------------
-        # Request status
-        # -------------------------------------------------
-
-        self.status_label = QLabel(
-            "Ready"
-        )
-
-        self.status_label.setObjectName(
-            "mutedText"
-        )
-
-        chat_layout.addWidget(
-            self.status_label
-        )
-
-        root_layout.addWidget(
-            chat_container,
-            stretch=1,
-        )
-
-        self.input_box.setFocus()
-
-    def _apply_style(self) -> None:
-        """
-        Apply a simple dark JARVIS theme.
-
-        This is intentionally only a v0.1 visual layer.
-
-        Later we can build a full design system with:
-        - reusable components
-        - animations
-        - navigation pages
-        - icons
-        - status indicators
-        - richer chat bubbles
-        """
-
-        self.setStyleSheet(
-            """
-            QMainWindow {
-                background: #111318;
-            }
-
-            QWidget {
-                color: #e8eaf0;
-                font-size: 14px;
-            }
-
-            QWidget#sidebar {
-                background: #181b22;
-                border-radius: 12px;
-            }
-
-            QWidget#chatContainer {
-                background: #181b22;
-                border-radius: 12px;
-            }
-
-            QLabel#jarvisTitle {
-                color: #65c8ff;
-            }
-
-            QLabel#sectionTitle {
-                color: #8d94a5;
-                font-size: 11px;
-                font-weight: bold;
-            }
-
-            QLabel#mutedText {
-                color: #8d94a5;
-            }
-
-            QPlainTextEdit {
-                background: #101217;
-                border: 1px solid #2b303b;
-                border-radius: 10px;
-                padding: 12px;
-                selection-background-color: #355b72;
-            }
-
-            QLineEdit {
-                background: #101217;
-                border: 1px solid #2b303b;
-                border-radius: 9px;
-                padding: 11px;
-            }
-
-            QLineEdit:focus {
-                border: 1px solid #65c8ff;
-            }
-
-            QPushButton {
-                background: #242a34;
-                border: 1px solid #343b48;
-                border-radius: 8px;
-                padding: 10px 16px;
-            }
-
-            QPushButton:hover {
-                background: #303744;
-            }
-
-            QPushButton:pressed {
-                background: #1d222a;
-            }
-
-            QPushButton:disabled {
-                color: #656b77;
-                background: #1b1f26;
-            }
-            """
-        )
-
-    def _send_message(self) -> None:
-        """
-        Send the current input to JARVIS.
-        """
-
-        # Only allow one AI request at a time.
-        if self.request_in_progress:
-            return
-
-        prompt = self.input_box.text().strip()
-
-        if not prompt:
-            return
-
-        # -------------------------------------------------
-        # Display the user's message immediately.
-        # -------------------------------------------------
-
-        self._append_message(
-            "You",
-            prompt,
-        )
-
-        self.input_box.clear()
-
-        self._set_busy(
-            True
-        )
-
-        # -------------------------------------------------
-        # Create a new worker thread for this request.
-        # -------------------------------------------------
-
-        thread = QThread()
-
-        worker = AskWorker(
-            app=self.jarvis,
-            prompt=prompt,
+        self.chat_page = ChatPage(
+            jarvis=self.jarvis,
             system_prompt=self.system_prompt,
         )
 
-        self.worker_thread = thread
-        self.worker = worker
-
-        worker.moveToThread(
-            thread
+        self.tasks_page = PlaceholderPage(
+            title="Tasks",
+            description=(
+                "Persistent and background tasks will "
+                "appear here once the JARVIS task engine "
+                "is implemented."
+            ),
         )
 
-        # Start the AI request when the thread starts.
-        thread.started.connect(
-            worker.run
+        self.permissions_page = PermissionsPage(
+            jarvis=self.jarvis,
         )
 
-        # Handle result/error.
-        worker.finished.connect(
-            self._handle_response
+        self.models_page = PlaceholderPage(
+            title="Models",
+            description=(
+                "Model selection and the future ModelRouter "
+                "will be managed here."
+            ),
         )
 
-        worker.failed.connect(
-            self._handle_error
+        self.settings_page = PlaceholderPage(
+            title="Settings",
+            description=(
+                "General JARVIS configuration will be "
+                "managed here."
+            ),
         )
 
-        # Stop the thread after completion.
-        worker.finished.connect(
-            thread.quit
+        self.logs_page = PlaceholderPage(
+            title="Logs",
+            description=(
+                "Agent actions, tool calls, security "
+                "decisions, and system events will "
+                "eventually be visible here."
+            ),
         )
 
-        worker.failed.connect(
-            thread.quit
+        self.pages.addWidget(
+            self.chat_page
         )
 
-        # Schedule Qt object cleanup.
-        worker.finished.connect(
-            worker.deleteLater
+        self.pages.addWidget(
+            self.tasks_page
         )
 
-        worker.failed.connect(
-            worker.deleteLater
+        self.pages.addWidget(
+            self.permissions_page
         )
 
-        thread.finished.connect(
-            thread.deleteLater
+        self.pages.addWidget(
+            self.models_page
         )
 
-        thread.finished.connect(
-            self._clear_worker_references
+        self.pages.addWidget(
+            self.settings_page
         )
 
-        thread.start()
+        self.pages.addWidget(
+            self.logs_page
+        )
 
-    def _append_message(
+        root_layout.addWidget(
+            self.pages,
+            stretch=1,
+        )
+
+        # -------------------------------------------------
+        # Cross-page signals
+        # -------------------------------------------------
+
+        self.chat_page.message_count_changed.connect(
+            self._set_message_count
+        )
+
+        self.chat_page.busy_changed.connect(
+            self._set_request_busy
+        )
+
+    def _add_navigation_button(
         self,
-        speaker: str,
-        message: str,
+        layout: QVBoxLayout,
+        text: str,
+        page_id: int,
+        *,
+        checked: bool = False,
     ) -> None:
         """
-        Add one plain-text message to the chat view.
+        Add one sidebar navigation button.
         """
 
-        self.chat_view.appendPlainText(
-            f"{speaker}:"
+        button = QPushButton(
+            text
         )
 
-        self.chat_view.appendPlainText(
-            message
+        button.setObjectName(
+            "navButton"
         )
 
-        self.chat_view.appendPlainText(
-            ""
+        button.setCheckable(
+            True
         )
 
-        # Move the scrollbar to the newest message.
-        scrollbar = self.chat_view.verticalScrollBar()
-
-        scrollbar.setValue(
-            scrollbar.maximum()
+        button.setChecked(
+            checked
         )
 
-    def _handle_response(
+        self.navigation_group.addButton(
+            button,
+            page_id,
+        )
+
+        layout.addWidget(
+            button
+        )
+
+    def _navigate_to(
         self,
-        response: str,
+        page_id: int,
     ) -> None:
         """
-        Display a successful JARVIS response.
+        Display the requested application page.
         """
 
-        self._append_message(
-            "JARVIS",
-            response,
+        self.pages.setCurrentIndex(
+            page_id
         )
 
-        self._update_message_count()
-
-        self._set_busy(
-            False
-        )
-
-    def _handle_error(
-        self,
-        error: str,
-    ) -> None:
+    def _start_new_chat(self) -> None:
         """
-        Display an error without crashing the desktop app.
+        Reset conversation state and return to Chat.
         """
 
-        self._append_message(
-            "JARVIS error",
-            error,
+        self.chat_page.start_new_conversation()
+
+        self.pages.setCurrentIndex(
+            self.CHAT_PAGE
         )
 
-        self._set_busy(
-            False
+        chat_button = self.navigation_group.button(
+            self.CHAT_PAGE
         )
 
-    def _set_busy(
-        self,
-        busy: bool,
-    ) -> None:
-        """
-        Update controls while JARVIS is processing.
-        """
-
-        self.request_in_progress = busy
-
-        self.input_box.setDisabled(
-            busy
-        )
-
-        self.send_button.setDisabled(
-            busy
-        )
-
-        self.new_chat_button.setDisabled(
-            busy
-        )
-
-        if busy:
-            self.status_label.setText(
-                "JARVIS is thinking..."
+        if chat_button is not None:
+            chat_button.setChecked(
+                True
             )
 
-        else:
-            self.status_label.setText(
-                "Ready"
-            )
-
-            self.input_box.setFocus()
-
-    def _start_new_conversation(self) -> None:
+    def _set_message_count(
+        self,
+        count: int,
+    ) -> None:
         """
-        Reset the real conversation state and clear
-        the visible conversation.
+        Update conversation metadata in the sidebar.
         """
-
-        if self.request_in_progress:
-            return
-
-        self.jarvis.new_conversation()
-
-        self.chat_view.clear()
-
-        self._update_message_count()
-
-        self.status_label.setText(
-            "Started a new conversation."
-        )
-
-        self.input_box.setFocus()
-
-    def _update_message_count(self) -> None:
-        """
-        Display the number of internal conversation messages.
-
-        This includes user messages, assistant messages,
-        and tool-result messages.
-        """
-
-        count = self.jarvis.conversation_message_count()
 
         self.message_count_label.setText(
             f"Messages: {count}"
         )
 
-    def _clear_worker_references(self) -> None:
+    def _set_request_busy(
+        self,
+        busy: bool,
+    ) -> None:
         """
-        Remove references after the background request
-        has completely finished.
+        Prevent a conversation reset while an agent
+        request is still running.
         """
 
-        self.worker = None
-        self.worker_thread = None
+        self.new_chat_button.setDisabled(
+            busy
+        )
 
     def closeEvent(
         self,
         event: QCloseEvent,
     ) -> None:
         """
-        Do not destroy JARVIS while a model request is active.
+        Protect an active model request from being
+        destroyed while its worker thread is running.
 
-        Proper request cancellation will be added later.
+        Proper cancellation comes later.
         """
 
-        if self.request_in_progress:
-            self.status_label.setText(
+        if self.chat_page.request_in_progress:
+            self.chat_page.status_label.setText(
                 "Wait for the current request to finish "
                 "before closing JARVIS."
+            )
+
+            self.pages.setCurrentIndex(
+                self.CHAT_PAGE
             )
 
             event.ignore()
@@ -854,7 +540,7 @@ class JarvisWindow(QMainWindow):
 
 def main() -> None:
     """
-    Start the JARVIS desktop application.
+    Start JARVIS Desktop.
     """
 
     qt_app = QApplication(
