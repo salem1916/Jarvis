@@ -168,3 +168,89 @@ def test_external_scope_can_be_removed_but_workspace_cannot(
         policy.remove_root(
             workspace
         )
+
+def test_approved_folder_name_can_be_used_as_alias(
+    tmp_path: Path,
+) -> None:
+    """
+    If Desktop is an approved root:
+
+        Desktop\\learn.txt
+
+    should resolve to the real approved Desktop rather
+    than workspace/Desktop.
+    """
+
+    workspace = tmp_path / "workspace"
+    desktop = tmp_path / "Desktop"
+
+    workspace.mkdir()
+    desktop.mkdir()
+
+    learn_file = desktop / "learn.txt"
+
+    learn_file.write_text(
+        "real desktop content",
+        encoding="utf-8",
+    )
+
+    policy = FilesystemScopePolicy(
+        workspace
+    )
+
+    policy.add_root(
+        desktop
+    )
+
+    resolved = policy.resolve_path(
+        Path("Desktop") / "learn.txt"
+    )
+
+    assert resolved == learn_file.resolve()
+
+
+def test_ambiguous_scope_alias_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """
+    If two approved roots have the same folder name,
+    JARVIS must refuse to guess.
+    """
+
+    workspace = tmp_path / "workspace"
+
+    first_parent = tmp_path / "first"
+    second_parent = tmp_path / "second"
+
+    first_desktop = first_parent / "Desktop"
+    second_desktop = second_parent / "Desktop"
+
+    workspace.mkdir()
+
+    first_desktop.mkdir(
+        parents=True
+    )
+
+    second_desktop.mkdir(
+        parents=True
+    )
+
+    policy = FilesystemScopePolicy(
+        workspace
+    )
+
+    policy.add_root(
+        first_desktop
+    )
+
+    policy.add_root(
+        second_desktop
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="alias is ambiguous",
+    ):
+        policy.resolve_path(
+            Path("Desktop") / "file.txt"
+        )        

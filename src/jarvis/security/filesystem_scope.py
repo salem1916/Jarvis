@@ -6,25 +6,21 @@ class FilesystemScopePolicy:
     """
     Controls which filesystem locations JARVIS may read.
 
-    The workspace is always an allowed root.
+    Security requires BOTH:
 
-    Additional directories may be granted later by the user.
+        READ_FILE capability
+                +
+        approved filesystem scope
 
-    Example:
+    The workspace always remains approved.
 
-        workspace
+    User-approved folders may additionally include:
+
+        Desktop
         Documents
         Downloads
-        C:\\Projects
-
-    A path is allowed only when its fully-resolved path is
-    inside one of these approved roots.
-
-    Resolving paths first also protects against:
-
-    - ../ path traversal
-    - absolute paths outside approved roots
-    - symlinks that escape an approved directory
+        D:\\University
+        custom project directories
     """
 
     def __init__(
@@ -32,7 +28,11 @@ class FilesystemScopePolicy:
         workspace_root: Path,
         allowed_roots: Iterable[Path] | None = None,
     ) -> None:
-        self._workspace_root = workspace_root.expanduser().resolve()
+        self._workspace_root = (
+            workspace_root
+            .expanduser()
+            .resolve()
+        )
 
         self._allowed_roots: list[Path] = [
             self._workspace_root
@@ -40,23 +40,26 @@ class FilesystemScopePolicy:
 
         if allowed_roots is not None:
             for root in allowed_roots:
-                self.add_root(root)
+                self.add_root(
+                    root
+                )
 
     @property
-    def workspace_root(self) -> Path:
+    def workspace_root(
+        self,
+    ) -> Path:
         """
-        Return the permanent JARVIS workspace root.
+        Return the permanent workspace root.
         """
 
         return self._workspace_root
 
     @property
-    def allowed_roots(self) -> tuple[Path, ...]:
+    def allowed_roots(
+        self,
+    ) -> tuple[Path, ...]:
         """
-        Return the currently approved read scopes.
-
-        A tuple prevents callers from directly modifying
-        our internal list.
+        Return all currently approved read roots.
         """
 
         return tuple(
@@ -68,14 +71,14 @@ class FilesystemScopePolicy:
         path: Path,
     ) -> None:
         """
-        Grant JARVIS read access to one directory.
-
-        The directory must already exist.
-
-        Adding the same directory twice is harmless.
+        Grant read access to one existing directory.
         """
 
-        resolved = path.expanduser().resolve()
+        resolved = (
+            path
+            .expanduser()
+            .resolve()
+        )
 
         if not resolved.exists():
             raise FileNotFoundError(
@@ -97,12 +100,16 @@ class FilesystemScopePolicy:
         path: Path,
     ) -> None:
         """
-        Remove one previously granted filesystem scope.
+        Remove a user-approved filesystem scope.
 
-        The permanent JARVIS workspace cannot be removed.
+        The JARVIS workspace cannot be removed.
         """
 
-        resolved = path.expanduser().resolve()
+        resolved = (
+            path
+            .expanduser()
+            .resolve()
+        )
 
         if resolved == self._workspace_root:
             raise ValueError(
@@ -111,7 +118,8 @@ class FilesystemScopePolicy:
 
         if resolved not in self._allowed_roots:
             raise ValueError(
-                f"Filesystem scope is not currently allowed: {resolved}"
+                "Filesystem scope is not currently allowed: "
+                f"{resolved}"
             )
 
         self._allowed_roots.remove(
@@ -123,15 +131,20 @@ class FilesystemScopePolicy:
         path: Path,
     ) -> bool:
         """
-        Return True when a resolved path is inside at least
-        one approved filesystem root.
+        Return whether a path belongs to an approved scope.
         """
 
-        resolved = path.expanduser().resolve()
+        resolved = (
+            path
+            .expanduser()
+            .resolve()
+        )
 
         return any(
             resolved == root
-            or resolved.is_relative_to(root)
+            or resolved.is_relative_to(
+                root
+            )
             for root in self._allowed_roots
         )
 
@@ -140,27 +153,46 @@ class FilesystemScopePolicy:
         path: str | Path,
     ) -> Path:
         """
-        Resolve a requested path and enforce scope rules.
+        Resolve a filesystem request safely.
 
-        Relative paths continue to mean:
+        Absolute path:
 
-            relative to the JARVIS workspace
+            C:\\Users\\salem\\Desktop\\file.txt
 
-        Absolute paths are accepted only when they are
-        inside an explicitly approved root.
+        is accepted only if it belongs to an approved root.
+
+        Normal relative path:
+
+            hello.txt
+
+        remains relative to the JARVIS workspace.
+
+        NEW: approved-scope aliases are deterministic.
+
+        If Desktop is approved:
+
+            Desktop\\to learn.txt
+
+        becomes:
+
+            C:\\Users\\salem\\Desktop\\to learn.txt
+
+        instead of:
+
+            <workspace>\\Desktop\\to learn.txt
         """
 
         candidate = Path(
             path
         ).expanduser()
 
-        if not candidate.is_absolute():
-            candidate = (
-                self._workspace_root
-                / candidate
-            )
+        if candidate.is_absolute():
+            resolved = candidate.resolve()
 
-        resolved = candidate.resolve()
+        else:
+            resolved = self._resolve_relative_path(
+                candidate
+            )
 
         if not self.is_allowed(
             resolved
@@ -170,4 +202,90 @@ class FilesystemScopePolicy:
             )
 
         return resolved
-        
+
+    def _resolve_relative_path(
+        self,
+        candidate: Path,
+    ) -> Path:
+        """
+        Resolve relative paths using approved-root aliases.
+
+        Example approved roots:
+
+            C:\\...\\workspace
+            C:\\Users\\salem\\Desktop
+            C:\\Users\\salem\\Documents
+
+        Then:
+
+            Desktop\\file.txt
+
+        maps directly to the approved Desktop root.
+
+        If no approved-root alias matches, the path keeps
+        the original workspace-relative behavior.
+        """
+
+        parts = candidate.parts
+
+        # "." or an empty relative path means workspace.
+        if not parts:
+            return self._workspace_root
+
+        requested_alias = (
+            parts[0]
+            .casefold()
+        )
+
+        matching_roots = [
+            root
+            for root in self._allowed_roots
+            if root.name.casefold()
+            == requested_alias
+        ]
+
+        # -------------------------------------------------
+        # One exact approved alias:
+        #
+        # Desktop\foo.txt
+        #     ↓
+        # C:\Users\...\Desktop\foo.txt
+        # -------------------------------------------------
+
+        if len(
+            matching_roots
+        ) == 1:
+            root = matching_roots[0]
+
+            remaining_parts = parts[
+                1:
+            ]
+
+            return root.joinpath(
+                *remaining_parts
+            ).resolve()
+
+        # -------------------------------------------------
+        # More than one approved folder has the same name.
+        #
+        # We refuse to guess.
+        # -------------------------------------------------
+
+        if len(
+            matching_roots
+        ) > 1:
+            raise ValueError(
+                "Filesystem scope alias is ambiguous. "
+                "Use an exact absolute path."
+            )
+
+        # -------------------------------------------------
+        # No approved alias:
+        #
+        # Preserve existing workspace-relative behavior.
+        # -------------------------------------------------
+
+        return (
+            self._workspace_root
+            / candidate
+        ).resolve()

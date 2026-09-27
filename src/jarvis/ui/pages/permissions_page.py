@@ -185,9 +185,9 @@ class PermissionsPage(QWidget):
         )
 
         session_notice = QLabel(
-            "These additional folder permissions currently "
-            "last only until JARVIS is closed. Persistent "
-            "permission settings will be added later."
+    "Folders you approve here are remembered across "
+    "JARVIS restarts until you remove them. "
+    "Read access does not grant write or delete access."
         )
 
         session_notice.setWordWrap(

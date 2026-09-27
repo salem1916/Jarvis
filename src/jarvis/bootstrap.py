@@ -4,6 +4,7 @@ from jarvis.models.base import ModelProvider
 from jarvis.models.ollama import OllamaProvider
 from jarvis.security.capabilities import Capability
 from jarvis.security.filesystem_scope import FilesystemScopePolicy
+from jarvis.security.filesystem_scope_store import FilesystemScopeStore
 from jarvis.security.policy import PermissionPolicy
 from jarvis.tools.calculator import CalculatorTool
 from jarvis.tools.executor import ToolExecutor
@@ -19,10 +20,7 @@ def build_model_provider(
     settings: JarvisSettings,
 ) -> ModelProvider:
     """
-    Build the configured AI model backend.
-
-    The rest of JARVIS communicates through ModelProvider
-    rather than depending directly on Ollama.
+    Build the configured model backend.
     """
 
     if settings.model_provider == "ollama":
@@ -32,7 +30,7 @@ def build_model_provider(
         )
 
     raise ValueError(
-        f"Unsupported model provider: "
+        "Unsupported model provider: "
         f"{settings.model_provider}"
     )
 
@@ -41,26 +39,14 @@ def build_application(
     settings: JarvisSettings,
 ) -> JarvisApplication:
     """
-    Assemble the complete JARVIS application.
-
-    Security uses two separate concepts:
-
-        Capability
-            What kind of operation may happen?
-
-        FilesystemScopePolicy
-            Where may that operation happen?
-
-    READ_FILE therefore does not automatically mean
-    unrestricted access to the computer.
+    Assemble the complete JARVIS runtime.
     """
 
-    # -------------------------------------------------
-    # Capability permissions
-    # -------------------------------------------------
+    # =================================================
+    # CAPABILITY POLICY
+    # =================================================
 
     allowed_capabilities: set[Capability] = {
-        # Safe deterministic local computation.
         Capability.CALCULATE,
     }
 
@@ -78,27 +64,33 @@ def build_application(
         allowed=allowed_capabilities,
     )
 
-    # -------------------------------------------------
-    # Filesystem resource scopes
-    #
-    # Workspace is always available.
-    #
-    # Additional user-approved folders can later be
-    # added through the desktop Permissions page.
-    # -------------------------------------------------
+    # =================================================
+    # PERSISTED FILESYSTEM SCOPES
+    # =================================================
+
+    filesystem_scope_store: FilesystemScopeStore | None = None
+
+    persisted_roots = ()
+
+    if settings.persist_filesystem_scopes:
+        filesystem_scope_store = FilesystemScopeStore(
+            settings.state_dir
+            / "filesystem_scopes.json"
+        )
+
+        persisted_roots = filesystem_scope_store.load()
 
     filesystem_scope_policy = FilesystemScopePolicy(
-        settings.workspace_dir
+        settings.workspace_dir,
+        allowed_roots=persisted_roots,
     )
 
-    # -------------------------------------------------
-    # Tool registry
-    # -------------------------------------------------
+    # =================================================
+    # TOOL REGISTRY
+    # =================================================
 
     registry = ToolRegistry()
 
-    # The model can discover which real folders have
-    # already been approved.
     registry.register(
         ListFilesystemScopesTool(
             filesystem_scope_policy
@@ -127,9 +119,9 @@ def build_application(
         CalculatorTool()
     )
 
-    # -------------------------------------------------
-    # Secure tool execution
-    # -------------------------------------------------
+    # =================================================
+    # SECURE EXECUTION
+    # =================================================
 
     executor = ToolExecutor(
         permission_policy
@@ -140,20 +132,21 @@ def build_application(
         executor,
     )
 
-    # -------------------------------------------------
-    # AI backend
-    # -------------------------------------------------
+    # =================================================
+    # MODEL
+    # =================================================
 
     model_provider = build_model_provider(
         settings
     )
 
-    # -------------------------------------------------
-    # Application facade
-    # -------------------------------------------------
+    # =================================================
+    # APPLICATION
+    # =================================================
 
     return JarvisApplication(
         tool_service=tool_service,
         model_provider=model_provider,
         filesystem_scope_policy=filesystem_scope_policy,
+        filesystem_scope_store=filesystem_scope_store,
     )

@@ -10,6 +10,7 @@ from jarvis.models.base import (
 )
 from jarvis.security.capabilities import Capability
 from jarvis.security.filesystem_scope import FilesystemScopePolicy
+from jarvis.security.filesystem_scope_store import FilesystemScopeStore
 from jarvis.security.policy import PermissionDecision
 from jarvis.tools.service import ToolService
 
@@ -18,14 +19,9 @@ class JarvisApplication:
     """
     Main application facade for JARVIS.
 
-    Interfaces such as:
-
-    - CLI
-    - desktop UI
-    - future mobile/dashboard interfaces
-
-    communicate with this class rather than directly
-    controlling security, models, or tools.
+    CLI, Desktop UI, and future interfaces communicate
+    through this class rather than reaching directly into
+    tools/security/model internals.
     """
 
     def __init__(
@@ -33,11 +29,13 @@ class JarvisApplication:
         tool_service: ToolService,
         model_provider: ModelProvider,
         filesystem_scope_policy: FilesystemScopePolicy | None = None,
+        filesystem_scope_store: FilesystemScopeStore | None = None,
     ) -> None:
         self.tool_service = tool_service
         self.model_provider = model_provider
 
         self.filesystem_scope_policy = filesystem_scope_policy
+        self.filesystem_scope_store = filesystem_scope_store
 
         self.agent_service = AgentService(
             model_provider=model_provider,
@@ -51,8 +49,8 @@ class JarvisApplication:
         request: ToolRequest,
     ) -> object:
         """
-        Execute a direct tool request through JARVIS's
-        trusted security pipeline.
+        Execute a direct tool request through the trusted
+        JARVIS security pipeline.
         """
 
         return self.tool_service.execute(
@@ -65,7 +63,7 @@ class JarvisApplication:
         system_prompt: str | None = None,
     ) -> ModelResponse:
         """
-        Perform a simple stateless model request.
+        Perform a stateless model request.
         """
 
         request = ModelRequest(
@@ -83,7 +81,7 @@ class JarvisApplication:
         system_prompt: str | None = None,
     ) -> str:
         """
-        Main conversational JARVIS path.
+        Main conversational agent path.
         """
 
         return self.agent_service.run(
@@ -92,16 +90,22 @@ class JarvisApplication:
             conversation=self.conversation,
         )
 
-    def new_conversation(self) -> None:
+    def new_conversation(
+        self,
+    ) -> None:
         """
-        Start a fresh in-memory conversation.
+        Clear conversation history ONLY.
+
+        Filesystem permissions are intentionally unaffected.
         """
 
         self.conversation.clear()
 
-    def conversation_message_count(self) -> int:
+    def conversation_message_count(
+        self,
+    ) -> int:
         """
-        Return the current internal conversation length.
+        Return current conversation-message count.
         """
 
         return len(
@@ -113,7 +117,7 @@ class JarvisApplication:
         capability: Capability,
     ) -> PermissionDecision:
         """
-        Query the real security policy.
+        Query the real capability security policy.
         """
 
         return self.tool_service.executor.policy.evaluate(
@@ -124,12 +128,21 @@ class JarvisApplication:
         self,
     ) -> tuple[Path, ...]:
         """
-        Return every directory JARVIS may currently read.
+        Return all currently approved filesystem roots.
         """
 
         policy = self._require_filesystem_scope_policy()
 
         return policy.allowed_roots
+
+    def filesystem_scope_persistence_enabled(
+        self,
+    ) -> bool:
+        """
+        Return whether user-approved scopes survive restart.
+        """
+
+        return self.filesystem_scope_store is not None
 
     def add_filesystem_read_scope(
         self,
@@ -138,9 +151,8 @@ class JarvisApplication:
         """
         Grant read access to one additional directory.
 
-        This changes only filesystem scope.
-
-        It does NOT grant WRITE_FILE or DELETE_FILE.
+        WRITE_FILE and DELETE_FILE remain completely separate
+        capabilities and are NOT granted here.
         """
 
         policy = self._require_filesystem_scope_policy()
@@ -149,14 +161,14 @@ class JarvisApplication:
             path
         )
 
+        self._persist_filesystem_scopes()
+
     def remove_filesystem_read_scope(
         self,
         path: Path,
     ) -> None:
         """
-        Remove one previously granted read scope.
-
-        The permanent workspace cannot be removed.
+        Remove one previously granted external read scope.
         """
 
         policy = self._require_filesystem_scope_policy()
@@ -165,14 +177,41 @@ class JarvisApplication:
             path
         )
 
+        self._persist_filesystem_scopes()
+
+    def _persist_filesystem_scopes(
+        self,
+    ) -> None:
+        """
+        Save additional approved folders when persistence
+        is enabled.
+
+        The permanent workspace is intentionally excluded.
+        """
+
+        if self.filesystem_scope_store is None:
+            return
+
+        policy = self._require_filesystem_scope_policy()
+
+        additional_roots = [
+            root
+            for root in policy.allowed_roots
+            if root != policy.workspace_root
+        ]
+
+        self.filesystem_scope_store.save(
+            additional_roots
+        )
+
     def _require_filesystem_scope_policy(
         self,
     ) -> FilesystemScopePolicy:
         """
-        Return the configured filesystem scope policy.
+        Return the configured filesystem policy.
 
-        A missing policy indicates an incorrectly assembled
-        application rather than a user permission problem.
+        Missing policy means the application was assembled
+        incorrectly.
         """
 
         if self.filesystem_scope_policy is None:

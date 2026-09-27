@@ -8,13 +8,17 @@ from jarvis.models.base import (
     ModelRequest,
     ModelToolDefinition,
 )
+from jarvis.tools.executor import (
+    ConfirmationRequiredError,
+    PermissionDeniedError,
+)
 from jarvis.tools.service import ToolService
 
 
 class AgentLoopLimitError(RuntimeError):
     """
-    Raised when the model continues requesting tools
-    beyond JARVIS's configured safety limit.
+    Raised when the model continues requesting tools beyond
+    JARVIS's configured safety limit.
     """
 
 
@@ -22,13 +26,12 @@ class AgentService:
     """
     Secure multi-turn JARVIS agent.
 
-    Architecture:
+    The model may REQUEST actions, but it never receives
+    direct authority over the computer.
 
-        User
-          ↓
+    Every action still passes through:
+
         Model
-          ↓
-        ModelToolCall
           ↓
         ToolRequest
           ↓
@@ -38,14 +41,12 @@ class AgentService:
           ↓
         ToolExecutor
           ↓
-        Real result
-          ↓
-        role="tool"
-          ↓
-        Model continues
+        Tool
 
-    A Conversation object can now preserve this history
-    across several separate user requests.
+    Recoverable execution failures may be returned to the
+    model so it can correct mistakes.
+
+    Security decisions are NEVER recoverable by the model.
     """
 
     def __init__(
@@ -72,25 +73,16 @@ class AgentService:
         """
         Execute one natural-language JARVIS request.
 
-        If a Conversation is supplied, previous successful
-        messages are included.
+        Conversation history is committed only when the
+        complete request succeeds.
 
-        This means separate calls such as:
-
-            "What files do I have?"
-
-        followed by:
-
-            "What does it contain?"
-
-        can share context.
-
-        Conversation changes are committed only after
-        successful completion.
+        This prevents failed requests from leaving a
+        half-completed conversation behind.
         """
 
         # -------------------------------------------------
-        # REAL tools registered in JARVIS
+        # Build the provider-independent tool definitions
+        # exposed to the model.
         # -------------------------------------------------
 
         available_tools = [
@@ -103,24 +95,18 @@ class AgentService:
         ]
 
         # -------------------------------------------------
-        # Start from previous conversation history.
-        #
-        # We work on a COPY.
-        #
-        # If the request later crashes or is denied,
-        # the original conversation remains unchanged.
+        # Start from previous conversation history if one
+        # exists.
         # -------------------------------------------------
 
         if conversation is not None:
             messages = conversation.snapshot()
+
         else:
             messages = []
 
         # -------------------------------------------------
-        # Add the system prompt once.
-        #
-        # We do not want to duplicate it on every
-        # separate "ask" command.
+        # Add the trusted system prompt only once.
         # -------------------------------------------------
 
         has_system_message = any(
@@ -154,27 +140,20 @@ class AgentService:
         tool_rounds_used = 0
 
         while True:
-            # ---------------------------------------------
-            # Send the FULL conversation to the model.
-            # ---------------------------------------------
+            # -------------------------------------------------
+            # Ask the model what to do next.
+            # -------------------------------------------------
 
             response = self.model_provider.generate(
                 ModelRequest(
-                    # Kept for compatibility with our
-                    # provider-independent model API.
                     prompt=prompt,
-
                     messages=messages,
-
                     tools=available_tools,
                 )
             )
 
-            # ---------------------------------------------
-            # Preserve the assistant's exact response
-            # and any tool calls it requested.
-            # ---------------------------------------------
-
+            # Preserve the assistant's exact response and
+            # requested tool calls.
             messages.append(
                 ModelMessage(
                     role="assistant",
@@ -183,13 +162,11 @@ class AgentService:
                 )
             )
 
-            # ---------------------------------------------
-            # No tool call means the request is complete.
-            # ---------------------------------------------
+            # -------------------------------------------------
+            # No tool calls = final answer.
+            # -------------------------------------------------
 
             if not response.tool_calls:
-                # Only now do we commit the completed
-                # conversation state.
                 if conversation is not None:
                     conversation.replace(
                         messages
@@ -197,9 +174,9 @@ class AgentService:
 
                 return response.text
 
-            # ---------------------------------------------
+            # -------------------------------------------------
             # Infinite-loop protection.
-            # ---------------------------------------------
+            # -------------------------------------------------
 
             if tool_rounds_used >= self.max_tool_rounds:
                 raise AgentLoopLimitError(
@@ -207,35 +184,75 @@ class AgentService:
                     "of tool rounds for this request."
                 )
 
-            # ---------------------------------------------
-            # Execute model-requested tools.
-            #
-            # They still go through the REAL security
-            # pipeline.
-            # ---------------------------------------------
+            # -------------------------------------------------
+            # Execute every requested tool.
+            # -------------------------------------------------
 
             for tool_call in response.tool_calls:
-                tool_request = ToolRequest(
+                request = ToolRequest(
                     tool_name=tool_call.name,
                     arguments=tool_call.arguments,
                 )
 
-                result = self.tool_service.execute(
-                    tool_request
-                )
+                try:
+                    result = self.tool_service.execute(
+                        request
+                    )
 
-                # -----------------------------------------
-                # Add the verified result to conversation
-                # history as a native tool message.
-                # -----------------------------------------
+                    tool_content = self._serialize_tool_result(
+                        result
+                    )
+
+                # =============================================
+                # SECURITY EXCEPTIONS
+                #
+                # These MUST escape immediately.
+                #
+                # The AI is never allowed to reason around,
+                # retry around, or reinterpret a security
+                # denial.
+                # =============================================
+
+                except PermissionDeniedError:
+                    raise
+
+                except ConfirmationRequiredError:
+                    raise
+
+                # =============================================
+                # RECOVERABLE EXECUTION ERRORS
+                #
+                # Examples:
+                #
+                # - wrong file path
+                # - missing directory
+                # - invalid calculator expression
+                # - malformed tool argument
+                #
+                # These are returned to the model so it gets
+                # another opportunity to correct its mistake.
+                # =============================================
+
+                except (
+                    OSError,
+                    TypeError,
+                    ValueError,
+                ) as exc:
+                    tool_content = self._serialize_tool_error(
+                        tool_name=tool_call.name,
+                        error=exc,
+                    )
+
+                # -------------------------------------------------
+                # Return either the real result or the recoverable
+                # error as a native tool message.
+                # -------------------------------------------------
 
                 messages.append(
                     ModelMessage(
                         role="tool",
                         tool_name=tool_call.name,
-                        content=self._serialize_tool_result(
-                            result
-                        ),
+                        content=tool_content,
                     )
                 )
 
@@ -246,12 +263,8 @@ class AgentService:
         result: object,
     ) -> str:
         """
-        Convert real tool results into model-friendly text.
-
-        Lists and dictionaries become JSON.
-
-        Plain strings, such as file contents, remain
-        plain strings.
+        Convert successful tool output into text suitable
+        for the model conversation.
         """
 
         if isinstance(
@@ -265,4 +278,53 @@ class AgentService:
                 default=str,
             )
 
-        return str(result)
+        return str(
+            result
+        )
+
+    @staticmethod
+    def _serialize_tool_error(
+        tool_name: str,
+        error: Exception,
+    ) -> str:
+        """
+        Convert a RECOVERABLE execution error into structured
+        tool feedback.
+
+        Important:
+
+        PermissionDeniedError and
+        ConfirmationRequiredError never reach this method.
+        """
+
+        payload: dict[str, object] = {
+            "ok": False,
+            "tool": tool_name,
+            "error": {
+                "type": type(
+                    error
+                ).__name__,
+                "message": str(
+                    error
+                ),
+            },
+        }
+
+        # Filesystem mistakes get an additional hint telling
+        # the model how to discover the real approved paths.
+        if tool_name in {
+            "read_file",
+            "list_directory",
+        }:
+            payload["recovery_hint"] = (
+                "The filesystem path may be wrong. "
+                "Use list_filesystem_scopes to discover "
+                "the exact approved filesystem locations, "
+                "then retry with the correct path."
+            )
+
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+        )
