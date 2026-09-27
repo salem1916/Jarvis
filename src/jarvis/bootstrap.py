@@ -1,7 +1,10 @@
 from jarvis.core.application import JarvisApplication
 from jarvis.core.config import JarvisSettings
+from jarvis.models.base import ModelProvider
+from jarvis.models.ollama import OllamaProvider
 from jarvis.security.capabilities import Capability
 from jarvis.security.policy import PermissionPolicy
+from jarvis.tools.calculator import CalculatorTool
 from jarvis.tools.executor import ToolExecutor
 from jarvis.tools.list_directory import ListDirectoryTool
 from jarvis.tools.read_file import ReadFileTool
@@ -10,14 +13,66 @@ from jarvis.tools.service import ToolService
 from jarvis.tools.system_info import SystemInfoTool
 
 
-def build_application(settings: JarvisSettings) -> JarvisApplication:
-    allowed_capabilities: set[Capability] = set()
+def build_model_provider(
+    settings: JarvisSettings,
+) -> ModelProvider:
+    """
+    Build the configured AI model backend.
+
+    The rest of JARVIS does not need to know
+    which concrete provider is being used.
+    """
+
+    if settings.model_provider == "ollama":
+        return OllamaProvider(
+            model=settings.ollama_model,
+            base_url=settings.ollama_base_url,
+        )
+
+    raise ValueError(
+        f"Unsupported model provider: "
+        f"{settings.model_provider}"
+    )
+
+
+def build_application(
+    settings: JarvisSettings,
+) -> JarvisApplication:
+    """
+    Assemble the JARVIS application.
+
+    This is our composition root:
+
+    configuration
+        ↓
+    permissions
+        ↓
+    tools
+        ↓
+    services
+        ↓
+    model
+        ↓
+    JarvisApplication
+    """
+
+    allowed_capabilities: set[Capability] = {
+        # Calculator is a pure local computation.
+        #
+        # It has no filesystem/network/application
+        # side effects, so we allow it by default.
+        Capability.CALCULATE,
+    }
 
     if settings.allow_read_file:
-        allowed_capabilities.add(Capability.READ_FILE)
+        allowed_capabilities.add(
+            Capability.READ_FILE
+        )
 
     if settings.allow_system_info:
-        allowed_capabilities.add(Capability.READ_SYSTEM_INFO)
+        allowed_capabilities.add(
+            Capability.READ_SYSTEM_INFO
+        )
 
     policy = PermissionPolicy(
         allowed=allowed_capabilities,
@@ -26,18 +81,39 @@ def build_application(settings: JarvisSettings) -> JarvisApplication:
     registry = ToolRegistry()
 
     registry.register(
-        ReadFileTool(settings.workspace_dir),
+        ReadFileTool(
+            settings.workspace_dir
+        )
     )
 
     registry.register(
-        ListDirectoryTool(settings.workspace_dir),
+        ListDirectoryTool(
+            settings.workspace_dir
+        )
     )
 
     registry.register(
-        SystemInfoTool(),
+        SystemInfoTool()
     )
 
-    executor = ToolExecutor(policy)
-    tool_service = ToolService(registry, executor)
+    registry.register(
+        CalculatorTool()
+    )
 
-    return JarvisApplication(tool_service)
+    executor = ToolExecutor(
+        policy
+    )
+
+    tool_service = ToolService(
+        registry,
+        executor,
+    )
+
+    model_provider = build_model_provider(
+        settings
+    )
+
+    return JarvisApplication(
+        tool_service=tool_service,
+        model_provider=model_provider,
+    )

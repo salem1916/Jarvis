@@ -10,7 +10,16 @@ class Tool(ABC):
     description: ClassVar[str]
     required_capability: ClassVar[Capability]
 
+    parameters_schema: ClassVar[dict[str, object]] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+
     @abstractmethod
-    def execute(self, arguments: Mapping[str, object]) -> object:
+    def execute(
+        self,
+        arguments: Mapping[str, object],
+    ) -> object:
         """Execute the tool."""
         raise NotImplementedError
