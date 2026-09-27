@@ -9,15 +9,9 @@ def _default_state_dir() -> Path:
     """
     Return JARVIS's private application-state directory.
 
-    On Windows this normally becomes:
-
-        %APPDATA%\\Jarvis
-
-    Example:
+    Windows example:
 
         C:\\Users\\salem\\AppData\\Roaming\\Jarvis
-
-    This is intentionally outside the Git repository.
     """
 
     appdata = os.environ.get(
@@ -29,8 +23,6 @@ def _default_state_dir() -> Path:
             appdata
         ) / "Jarvis"
 
-    # Fallback for non-Windows development/testing
-    # environments.
     return Path.home() / ".jarvis"
 
 
@@ -38,13 +30,8 @@ class JarvisSettings(BaseSettings):
     """
     Base JARVIS configuration.
 
-    Important testing rule:
-
-    filesystem-scope persistence is OFF by default here.
-
-    Unit tests that construct JarvisSettings directly
-    therefore never read or modify the user's real
-    AppData permissions.
+    Persistence defaults to False here so unit tests never
+    accidentally touch the user's real application state.
     """
 
     model_config = SettingsConfigDict(
@@ -67,29 +54,25 @@ class JarvisSettings(BaseSettings):
         "http://127.0.0.1:11434"
     )
 
-    # -------------------------------------------------
-    # Persistent JARVIS application state
-    # -------------------------------------------------
-
     state_dir: Path = Field(
         default_factory=_default_state_dir
     )
 
-    # False for deterministic unit tests.
-    #
-    # The real runtime subclass below turns this on.
     persist_filesystem_scopes: bool = False
+
+    persist_permission_modes: bool = False
 
 
 class _EnvJarvisSettings(JarvisSettings):
     """
-    Real runtime settings.
+    Real JARVIS runtime configuration.
 
-    These read .env and enable persistent filesystem
-    approvals by default.
+    User-approved scopes and permission modes persist by
+    default in the real desktop application.
     """
 
     persist_filesystem_scopes: bool = True
+    persist_permission_modes: bool = True
 
     model_config = SettingsConfigDict(
         env_prefix="JARVIS_",
@@ -101,7 +84,7 @@ class _EnvJarvisSettings(JarvisSettings):
 
 def load_settings() -> JarvisSettings:
     """
-    Load the real JARVIS runtime configuration.
+    Load real runtime settings.
     """
 
     return _EnvJarvisSettings()

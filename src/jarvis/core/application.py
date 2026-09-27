@@ -12,17 +12,17 @@ from jarvis.models.base import (
 from jarvis.security.capabilities import Capability
 from jarvis.security.filesystem_scope import FilesystemScopePolicy
 from jarvis.security.filesystem_scope_store import FilesystemScopeStore
-from jarvis.security.policy import PermissionDecision
+from jarvis.security.permission_mode import PermissionMode
+from jarvis.security.permission_mode_store import PermissionModeStore
+from jarvis.security.policy import (
+    PermissionDecision,
+)
 from jarvis.tools.service import ToolService
 
 
 class JarvisApplication:
     """
-    Main application facade for JARVIS.
-
-    CLI, Desktop UI, and future interfaces communicate
-    through this class rather than reaching directly into
-    tools, security, or model internals.
+    Main trusted application facade for JARVIS.
     """
 
     def __init__(
@@ -31,12 +31,33 @@ class JarvisApplication:
         model_provider: ModelProvider,
         filesystem_scope_policy: FilesystemScopePolicy | None = None,
         filesystem_scope_store: FilesystemScopeStore | None = None,
+        permission_mode_store: PermissionModeStore | None = None,
+        permission_modes: dict[
+            Capability,
+            PermissionMode,
+        ] | None = None,
     ) -> None:
         self.tool_service = tool_service
         self.model_provider = model_provider
 
         self.filesystem_scope_policy = filesystem_scope_policy
         self.filesystem_scope_store = filesystem_scope_store
+
+        self.permission_mode_store = permission_mode_store
+
+        self._permission_modes = dict(
+            permission_modes or {}
+        )
+
+        # Persistent fallback state is kept separately.
+        #
+        # ALLOW_SESSION never belongs here.
+        self._persistent_permission_modes = {
+            capability: mode
+            for capability, mode
+            in self._permission_modes.items()
+            if mode is not PermissionMode.ALLOW_SESSION
+        }
 
         self.agent_service = AgentService(
             model_provider=model_provider,
@@ -52,8 +73,7 @@ class JarvisApplication:
         confirmed: bool = False,
     ) -> object:
         """
-        Execute a direct tool request through JARVIS's
-        trusted execution pipeline.
+        Execute a trusted structured tool request.
         """
 
         return self.tool_service.execute(
@@ -70,13 +90,11 @@ class JarvisApplication:
         Perform a stateless model request.
         """
 
-        request = ModelRequest(
-            prompt=prompt,
-            system_prompt=system_prompt,
-        )
-
         return self.model_provider.generate(
-            request
+            ModelRequest(
+                prompt=prompt,
+                system_prompt=system_prompt,
+            )
         )
 
     def ask_with_tools(
@@ -87,9 +105,6 @@ class JarvisApplication:
     ) -> str:
         """
         Main conversational agent path.
-
-        A frontend may provide a trusted confirmation handler
-        for actions requiring explicit human approval.
         """
 
         return self.agent_service.run(
@@ -104,8 +119,6 @@ class JarvisApplication:
     ) -> None:
         """
         Clear conversation history only.
-
-        Permission state remains unchanged.
         """
 
         self.conversation.clear()
@@ -113,33 +126,127 @@ class JarvisApplication:
     def conversation_message_count(
         self,
     ) -> int:
-        """
-        Return current internal conversation length.
-        """
-
         return len(
             self.conversation
         )
+
+    # =================================================
+    # CAPABILITY PERMISSIONS
+    # =================================================
 
     def permission_decision(
         self,
         capability: Capability,
     ) -> PermissionDecision:
         """
-        Query the real capability security policy.
+        Return the effective low-level policy decision.
         """
 
         return self.tool_service.executor.policy.evaluate(
             capability
         )
 
+    def permission_mode(
+        self,
+        capability: Capability,
+    ) -> PermissionMode:
+        """
+        Return the human-facing permission mode.
+
+        For capabilities not explicitly managed through the
+        mode system, derive a sensible value from the current
+        PermissionPolicy.
+        """
+
+        explicit_mode = self._permission_modes.get(
+            capability
+        )
+
+        if explicit_mode is not None:
+            return explicit_mode
+
+        decision = self.permission_decision(
+            capability
+        )
+
+        if decision is PermissionDecision.ALLOW:
+            return PermissionMode.ALLOW_SESSION
+
+        if decision is PermissionDecision.REQUIRE_CONFIRMATION:
+            return PermissionMode.ASK
+
+        return PermissionMode.DENY
+
+    def set_permission_mode(
+        self,
+        capability: Capability,
+        mode: PermissionMode,
+    ) -> None:
+        """
+        Change one capability's permission mode.
+
+        This API is trusted application state.
+
+        The AI model has no tool that can call it.
+        """
+
+        policy = self.tool_service.executor.policy
+
+        policy.set_decision(
+            capability,
+            mode.to_decision(),
+        )
+
+        self._permission_modes[
+            capability
+        ] = mode
+
+        # ---------------------------------------------
+        # Session-only:
+        #
+        # allow now, but return to ASK next restart.
+        # ---------------------------------------------
+
+        if mode is PermissionMode.ALLOW_SESSION:
+            self._persistent_permission_modes[
+                capability
+            ] = PermissionMode.ASK
+
+            self._persist_permission_modes()
+
+            return
+
+        # ---------------------------------------------
+        # Deny / Ask / Always Allow survive restart.
+        # ---------------------------------------------
+
+        self._persistent_permission_modes[
+            capability
+        ] = mode
+
+        self._persist_permission_modes()
+
+    def _persist_permission_modes(
+        self,
+    ) -> None:
+        """
+        Save permission preferences if persistence is enabled.
+        """
+
+        if self.permission_mode_store is None:
+            return
+
+        self.permission_mode_store.save(
+            self._persistent_permission_modes
+        )
+
+    # =================================================
+    # FILESYSTEM SCOPES
+    # =================================================
+
     def filesystem_read_scopes(
         self,
     ) -> tuple[Path, ...]:
-        """
-        Return every currently approved read root.
-        """
-
         policy = self._require_filesystem_scope_policy()
 
         return policy.allowed_roots
@@ -147,22 +254,12 @@ class JarvisApplication:
     def filesystem_scope_persistence_enabled(
         self,
     ) -> bool:
-        """
-        Return whether external filesystem scopes persist.
-        """
-
         return self.filesystem_scope_store is not None
 
     def add_filesystem_read_scope(
         self,
         path: Path,
     ) -> None:
-        """
-        Grant read access to one additional directory.
-
-        WRITE_FILE and DELETE_FILE remain separate.
-        """
-
         policy = self._require_filesystem_scope_policy()
 
         policy.add_root(
@@ -175,10 +272,6 @@ class JarvisApplication:
         self,
         path: Path,
     ) -> None:
-        """
-        Remove a previously approved external read scope.
-        """
-
         policy = self._require_filesystem_scope_policy()
 
         policy.remove_root(
@@ -190,10 +283,6 @@ class JarvisApplication:
     def _persist_filesystem_scopes(
         self,
     ) -> None:
-        """
-        Persist user-approved roots when configured.
-        """
-
         if self.filesystem_scope_store is None:
             return
 
@@ -212,10 +301,6 @@ class JarvisApplication:
     def _require_filesystem_scope_policy(
         self,
     ) -> FilesystemScopePolicy:
-        """
-        Return the configured filesystem scope policy.
-        """
-
         if self.filesystem_scope_policy is None:
             raise RuntimeError(
                 "Filesystem scope policy is not configured."

@@ -1,9 +1,8 @@
 """
 Central visual theme for JARVIS Desktop.
 
-Keeping presentation rules outside individual pages
-makes the desktop application easier to maintain and
-allows the design system to evolve independently.
+Presentation rules are kept outside individual pages so the
+desktop design can evolve independently from application logic.
 """
 
 APP_STYLESHEET = """
@@ -136,6 +135,35 @@ QLineEdit {
 
 QLineEdit:focus {
     border: 1px solid #65c8ff;
+}
+
+QComboBox#permissionModeCombo {
+    background: #171b22;
+    border: 1px solid #343b48;
+    border-radius: 7px;
+    padding: 7px 10px;
+    min-width: 170px;
+}
+
+QComboBox#permissionModeCombo:hover {
+    border: 1px solid #4b5667;
+}
+
+QComboBox#permissionModeCombo:focus {
+    border: 1px solid #65c8ff;
+}
+
+QComboBox#permissionModeCombo::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox QAbstractItemView {
+    background: #181b22;
+    border: 1px solid #343b48;
+    selection-background-color: #253747;
+    selection-color: #e7eaf0;
+    outline: none;
 }
 
 QListWidget#scopeList {

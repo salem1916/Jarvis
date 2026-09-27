@@ -5,7 +5,12 @@ from jarvis.models.ollama import OllamaProvider
 from jarvis.security.capabilities import Capability
 from jarvis.security.filesystem_scope import FilesystemScopePolicy
 from jarvis.security.filesystem_scope_store import FilesystemScopeStore
-from jarvis.security.policy import PermissionPolicy
+from jarvis.security.permission_mode import PermissionMode
+from jarvis.security.permission_mode_store import PermissionModeStore
+from jarvis.security.policy import (
+    PermissionDecision,
+    PermissionPolicy,
+)
 from jarvis.tools.calculator import CalculatorTool
 from jarvis.tools.executor import ToolExecutor
 from jarvis.tools.list_directory import ListDirectoryTool
@@ -23,6 +28,10 @@ def build_model_provider(
 ) -> ModelProvider:
     """
     Build the configured AI model backend.
+
+    The rest of JARVIS communicates through ModelProvider,
+    so Ollama can later be replaced or joined by other
+    providers without changing the entire application.
     """
 
     if settings.model_provider == "ollama":
@@ -43,17 +52,37 @@ def build_application(
     """
     Assemble the complete JARVIS runtime.
 
-    Read-only operations may run automatically.
+    This is the application's composition root.
 
-    Side-effect operations such as writing and deleting
-    require explicit human confirmation.
+    It connects:
+
+        configuration
+            ↓
+        permission modes
+            ↓
+        PermissionPolicy
+            ↓
+        filesystem scopes
+            ↓
+        tools
+            ↓
+        ToolExecutor / ToolService
+            ↓
+        AI model provider
+            ↓
+        JarvisApplication
     """
 
     # =================================================
-    # AUTOMATIC CAPABILITIES
+    # BASE AUTOMATIC CAPABILITIES
+    # =================================================
+    #
+    # These capabilities are automatically allowed
+    # depending on JARVIS configuration.
     # =================================================
 
     allowed_capabilities: set[Capability] = {
+        # Pure deterministic local calculation.
         Capability.CALCULATE,
     }
 
@@ -68,13 +97,108 @@ def build_application(
         )
 
     # =================================================
-    # HUMAN-CONFIRMED CAPABILITIES
+    # USER-CONFIGURABLE SIDE-EFFECT PERMISSIONS
+    # =================================================
+    #
+    # Safe defaults:
+    #
+    #     WRITE_FILE  -> Ask every time
+    #     DELETE_FILE -> Ask every time
+    #
+    # Later the user may choose:
+    #
+    #     DENY
+    #     ASK
+    #     ALLOW_SESSION
+    #     ALWAYS_ALLOW
     # =================================================
 
-    confirmation_capabilities: set[Capability] = {
-        Capability.WRITE_FILE,
-        Capability.DELETE_FILE,
+    default_modes: dict[
+        Capability,
+        PermissionMode,
+    ] = {
+        Capability.WRITE_FILE:
+            PermissionMode.ASK,
+
+        Capability.DELETE_FILE:
+            PermissionMode.ASK,
     }
+
+    # -------------------------------------------------
+    # Optional persistent permission-mode storage.
+    # -------------------------------------------------
+
+    permission_mode_store: PermissionModeStore | None = None
+
+    persisted_modes: dict[
+        Capability,
+        PermissionMode,
+    ] = {}
+
+    if settings.persist_permission_modes:
+        permission_mode_store = PermissionModeStore(
+            settings.state_dir
+            / "permission_modes.json"
+        )
+
+        persisted_modes = permission_mode_store.load()
+
+    # -------------------------------------------------
+    # Merge defaults with persisted user choices.
+    #
+    # Only capabilities that JARVIS currently exposes as
+    # configurable are accepted here.
+    # -------------------------------------------------
+
+    permission_modes: dict[
+        Capability,
+        PermissionMode,
+    ] = {
+        **default_modes,
+        **{
+            capability: mode
+            for capability, mode
+            in persisted_modes.items()
+            if capability in default_modes
+        },
+    }
+
+    # Capabilities that currently require explicit
+    # human confirmation.
+    confirmation_capabilities: set[
+        Capability
+    ] = set()
+
+    # -------------------------------------------------
+    # Convert human-facing PermissionMode values into
+    # low-level PermissionPolicy decisions.
+    # -------------------------------------------------
+
+    for capability, mode in permission_modes.items():
+        decision = mode.to_decision()
+
+        if decision is PermissionDecision.ALLOW:
+            allowed_capabilities.add(
+                capability
+            )
+
+        elif (
+            decision
+            is PermissionDecision.REQUIRE_CONFIRMATION
+        ):
+            confirmation_capabilities.add(
+                capability
+            )
+
+        # PermissionDecision.DENY requires no set membership.
+        #
+        # PermissionPolicy defaults to DENY when a capability
+        # is in neither allowed_capabilities nor
+        # confirmation_capabilities.
+
+    # =================================================
+    # CAPABILITY SECURITY POLICY
+    # =================================================
 
     permission_policy = PermissionPolicy(
         allowed=allowed_capabilities,
@@ -82,7 +206,18 @@ def build_application(
     )
 
     # =================================================
-    # PERSISTED FILESYSTEM SCOPES
+    # FILESYSTEM SCOPES
+    # =================================================
+    #
+    # Capability answers:
+    #
+    #     "May JARVIS read/write/delete?"
+    #
+    # FilesystemScopePolicy answers:
+    #
+    #     "WHERE may JARVIS operate?"
+    #
+    # Both layers are required.
     # =================================================
 
     filesystem_scope_store: FilesystemScopeStore | None = None
@@ -103,16 +238,24 @@ def build_application(
     )
 
     # =================================================
-    # TOOLS
+    # TOOL REGISTRY
     # =================================================
 
     registry = ToolRegistry()
+
+    # -------------------------------------------------
+    # Filesystem discovery
+    # -------------------------------------------------
 
     registry.register(
         ListFilesystemScopesTool(
             filesystem_scope_policy
         )
     )
+
+    # -------------------------------------------------
+    # Read-only filesystem tools
+    # -------------------------------------------------
 
     registry.register(
         ReadFileTool(
@@ -128,6 +271,13 @@ def build_application(
         )
     )
 
+    # -------------------------------------------------
+    # Side-effect filesystem tools
+    #
+    # WRITE_FILE and DELETE_FILE are protected by the
+    # PermissionPolicy configured above.
+    # -------------------------------------------------
+
     registry.register(
         WriteFileTool(
             settings.workspace_dir,
@@ -142,6 +292,10 @@ def build_application(
         )
     )
 
+    # -------------------------------------------------
+    # Other tools
+    # -------------------------------------------------
+
     registry.register(
         SystemInfoTool()
     )
@@ -151,7 +305,7 @@ def build_application(
     )
 
     # =================================================
-    # SECURE EXECUTION
+    # SECURE TOOL EXECUTION
     # =================================================
 
     executor = ToolExecutor(
@@ -164,16 +318,22 @@ def build_application(
     )
 
     # =================================================
-    # MODEL
+    # AI MODEL BACKEND
     # =================================================
 
     model_provider = build_model_provider(
         settings
     )
 
+    # =================================================
+    # FINAL APPLICATION
+    # =================================================
+
     return JarvisApplication(
         tool_service=tool_service,
         model_provider=model_provider,
         filesystem_scope_policy=filesystem_scope_policy,
         filesystem_scope_store=filesystem_scope_store,
+        permission_mode_store=permission_mode_store,
+        permission_modes=permission_modes,
     )
