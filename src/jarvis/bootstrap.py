@@ -11,8 +11,10 @@ from jarvis.security.policy import (
     PermissionDecision,
     PermissionPolicy,
 )
+from jarvis.tools.application_catalog import ApplicationCatalog
 from jarvis.tools.calculator import CalculatorTool
 from jarvis.tools.executor import ToolExecutor
+from jarvis.tools.list_applications import ListApplicationsTool
 from jarvis.tools.list_directory import ListDirectoryTool
 from jarvis.tools.list_filesystem_scopes import ListFilesystemScopesTool
 from jarvis.tools.open_application import OpenApplicationTool
@@ -51,7 +53,7 @@ def build_application(
     """
 
     # =================================================
-    # BASE AUTOMATIC CAPABILITIES
+    # AUTOMATIC CAPABILITIES
     # =================================================
 
     allowed_capabilities: set[Capability] = {
@@ -69,14 +71,7 @@ def build_application(
         )
 
     # =================================================
-    # USER-CONFIGURABLE SIDE-EFFECT CAPABILITIES
-    # =================================================
-    #
-    # Safe defaults:
-    #
-    #     WRITE_FILE       -> Ask
-    #     DELETE_FILE      -> Ask
-    #     OPEN_APPLICATION -> Ask
+    # USER-CONFIGURABLE SIDE-EFFECT PERMISSIONS
     # =================================================
 
     default_modes: dict[
@@ -92,10 +87,6 @@ def build_application(
         Capability.OPEN_APPLICATION:
             PermissionMode.ASK,
     }
-
-    # =================================================
-    # PERSISTED PERMISSION MODES
-    # =================================================
 
     permission_mode_store: PermissionModeStore | None = None
 
@@ -145,10 +136,6 @@ def build_application(
                 capability
             )
 
-    # =================================================
-    # CAPABILITY POLICY
-    # =================================================
-
     permission_policy = PermissionPolicy(
         allowed=allowed_capabilities,
         require_confirmation=confirmation_capabilities,
@@ -176,24 +163,22 @@ def build_application(
     )
 
     # =================================================
-    # TOOL REGISTRY
+    # WINDOWS APPLICATION CATALOG
+    # =================================================
+
+    application_catalog = ApplicationCatalog()
+
+    # =================================================
+    # TOOLS
     # =================================================
 
     registry = ToolRegistry()
-
-    # -------------------------------------------------
-    # Filesystem discovery
-    # -------------------------------------------------
 
     registry.register(
         ListFilesystemScopesTool(
             filesystem_scope_policy
         )
     )
-
-    # -------------------------------------------------
-    # Filesystem tools
-    # -------------------------------------------------
 
     registry.register(
         ReadFileTool(
@@ -224,16 +209,22 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Application control
+    # Application discovery + launching.
+    #
+    # Both share the SAME trusted catalog.
     # -------------------------------------------------
 
     registry.register(
-        OpenApplicationTool()
+        ListApplicationsTool(
+            application_catalog
+        )
     )
 
-    # -------------------------------------------------
-    # Deterministic utility tools
-    # -------------------------------------------------
+    registry.register(
+        OpenApplicationTool(
+            application_catalog
+        )
+    )
 
     registry.register(
         SystemInfoTool()
@@ -256,17 +247,9 @@ def build_application(
         executor,
     )
 
-    # =================================================
-    # AI MODEL
-    # =================================================
-
     model_provider = build_model_provider(
         settings
     )
-
-    # =================================================
-    # APPLICATION
-    # =================================================
 
     return JarvisApplication(
         tool_service=tool_service,

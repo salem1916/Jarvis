@@ -4,22 +4,20 @@ import pytest
 
 from jarvis.security.capabilities import Capability
 from jarvis.tools import open_application
+from jarvis.tools.application_catalog import ApplicationCatalog
 from jarvis.tools.open_application import OpenApplicationTool
-
-
-class FakeProcess:
-    """
-    Minimal subprocess replacement used by the tests.
-    """
-
-    pid = 12345
 
 
 def test_open_application_uses_correct_capability(
     tmp_path: Path,
 ) -> None:
+    catalog = ApplicationCatalog(
+        windows_root=tmp_path,
+        start_menu_roots=(),
+    )
+
     tool = OpenApplicationTool(
-        windows_root=tmp_path
+        catalog
     )
 
     assert (
@@ -28,59 +26,59 @@ def test_open_application_uses_correct_capability(
     )
 
 
-def test_open_application_launches_allowlisted_application(
+def test_open_application_launches_discovered_app(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    A trusted known application should resolve to its
-    internally controlled executable.
-    """
-
     windows = tmp_path / "Windows"
 
-    system32 = windows / "System32"
+    windows.mkdir()
 
-    system32.mkdir(
-        parents=True
+    start_menu = tmp_path / "StartMenu"
+
+    start_menu.mkdir()
+
+    chrome = (
+        start_menu
+        / "Google Chrome.lnk"
     )
 
-    executable = system32 / "notepad.exe"
-
-    executable.write_bytes(
-        b"fake"
+    chrome.write_bytes(
+        b"fake shortcut"
     )
 
-    launched_commands: list[
-        list[str]
+    catalog = ApplicationCatalog(
+        windows_root=windows,
+        start_menu_roots=(
+            start_menu,
+        ),
+    )
+
+    launched: list[
+        str
     ] = []
 
-    def fake_popen(
-        command: list[str],
-        *,
-        shell: bool,
-    ) -> FakeProcess:
-        assert shell is False
-
-        launched_commands.append(
-            command
+    def fake_startfile(
+        path: str,
+    ) -> None:
+        launched.append(
+            path
         )
 
-        return FakeProcess()
-
     monkeypatch.setattr(
-        open_application.subprocess,
-        "Popen",
-        fake_popen,
+        open_application.os,
+        "startfile",
+        fake_startfile,
+        raising=False,
     )
 
     tool = OpenApplicationTool(
-        windows_root=windows
+        catalog
     )
 
     result = tool.execute(
         {
-            "application": "Notepad",
+            "application": "chrome",
         }
     )
 
@@ -89,102 +87,107 @@ def test_open_application_launches_allowlisted_application(
         dict,
     )
 
-    assert launched_commands == [
-        [
-            str(
-                executable.resolve()
-            )
-        ]
+    assert launched == [
+        str(
+            chrome.resolve()
+        )
     ]
 
-    assert result[
-        "application"
-    ] == "Notepad"
+    assert (
+        result[
+            "application"
+        ]
+        == "Google Chrome"
+    )
 
-    assert result[
-        "pid"
-    ] == 12345
 
-
-def test_open_application_supports_aliases(
+def test_open_application_supports_vscode_alias(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    Natural aliases such as 'calc' should still resolve
-    deterministically.
-    """
+    start_menu = tmp_path / "StartMenu"
 
-    windows = tmp_path / "Windows"
+    start_menu.mkdir()
 
-    system32 = windows / "System32"
-
-    system32.mkdir(
-        parents=True
+    vscode = (
+        start_menu
+        / "Visual Studio Code.lnk"
     )
 
-    executable = system32 / "calc.exe"
-
-    executable.write_bytes(
+    vscode.write_bytes(
         b"fake"
     )
 
-    def fake_popen(
-        command: list[str],
-        *,
-        shell: bool,
-    ) -> FakeProcess:
-        assert command == [
-            str(
-                executable.resolve()
-            )
-        ]
+    catalog = ApplicationCatalog(
+        windows_root=tmp_path,
+        start_menu_roots=(
+            start_menu,
+        ),
+    )
 
-        assert shell is False
-
-        return FakeProcess()
+    launched: list[
+        str
+    ] = []
 
     monkeypatch.setattr(
-        open_application.subprocess,
-        "Popen",
-        fake_popen,
+        open_application.os,
+        "startfile",
+        lambda path:
+            launched.append(
+                path
+            ),
+        raising=False,
     )
 
     tool = OpenApplicationTool(
-        windows_root=windows
+        catalog
     )
 
-    result = tool.execute(
+    tool.execute(
         {
-            "application": "calc",
+            "application": "VS Code",
         }
     )
 
-    assert isinstance(
-        result,
-        dict,
-    )
-
-    assert result[
-        "application"
-    ] == "Calculator"
+    assert launched == [
+        str(
+            vscode.resolve()
+        )
+    ]
 
 
-def test_open_application_rejects_unknown_application(
+def test_open_application_blocks_command_prompt(
     tmp_path: Path,
 ) -> None:
-    """
-    The model must not be able to turn this tool into an
-    arbitrary executable launcher.
-    """
+    start_menu = tmp_path / "StartMenu"
+
+    start_menu.mkdir()
+
+    # Even if Windows has a Command Prompt shortcut,
+    # OPEN_APPLICATION must exclude it.
+    command_prompt = (
+        start_menu
+        / "Command Prompt.lnk"
+    )
+
+    command_prompt.write_bytes(
+        b"fake"
+    )
+
+    catalog = ApplicationCatalog(
+        windows_root=tmp_path,
+        start_menu_roots=(
+            start_menu,
+        ),
+    )
 
     tool = OpenApplicationTool(
-        windows_root=tmp_path
+        catalog
     )
 
     with pytest.raises(
         ValueError,
-        match="Unsupported application",
+        match="intentionally blocked",
     ):
         tool.execute(
             {
@@ -193,23 +196,24 @@ def test_open_application_rejects_unknown_application(
         )
 
 
-def test_open_application_rejects_missing_executable(
+def test_open_application_does_not_accept_arbitrary_path(
     tmp_path: Path,
 ) -> None:
-    """
-    A catalog entry must still physically exist before it
-    can be launched.
-    """
+    catalog = ApplicationCatalog(
+        windows_root=tmp_path,
+        start_menu_roots=(),
+    )
 
     tool = OpenApplicationTool(
-        windows_root=tmp_path
+        catalog
     )
 
     with pytest.raises(
-        FileNotFoundError,
+        ValueError,
     ):
         tool.execute(
             {
-                "application": "notepad",
+                "application":
+                    r"C:\Windows\System32\cmd.exe",
             }
         )

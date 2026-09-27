@@ -1,81 +1,60 @@
 import os
-import subprocess
 from collections.abc import Mapping
-from dataclasses import dataclass
-from pathlib import Path
 from typing import ClassVar
 
 from jarvis.security.capabilities import Capability
+from jarvis.tools.application_catalog import ApplicationCatalog
 from jarvis.tools.base import Tool
-
-
-@dataclass(
-    frozen=True,
-    slots=True,
-)
-class ApplicationDefinition:
-    """
-    Trusted definition of one application JARVIS may launch.
-
-    The model provides only a friendly application name.
-
-    It does NOT provide:
-
-        executable paths
-        command-line arguments
-        shell commands
-    """
-
-    name: str
-    relative_executable: Path
 
 
 class OpenApplicationTool(Tool):
     """
-    Open a trusted Windows application.
+    Open an installed Windows application safely.
 
     SECURITY MODEL
 
-    This deliberately does NOT accept an arbitrary executable
-    path or command from the AI model.
+    The model supplies only a friendly application name.
 
-    Instead:
+    The model cannot supply:
 
-        model asks for "notepad"
-                ↓
-        trusted alias lookup
-                ↓
-        known executable
-                ↓
-        OPEN_APPLICATION policy
-                ↓
-        launch
+        executable paths
+        shortcut paths
+        command-line arguments
+        shell commands
 
-    Arbitrary command execution belongs to RUN_COMMAND,
-    which will have a separate and stricter security policy.
+    ApplicationCatalog resolves the friendly name to a trusted
+    Windows executable or Start Menu shortcut.
     """
 
     name = "open_application"
 
     description = (
-        "Open a supported Windows application. "
-        "Currently supported applications are Notepad, "
-        "Calculator, and File Explorer. Use this tool when "
-        "the user explicitly asks to open or launch one of "
-        "these applications. Do not use shell commands."
+        "Open an installed Windows application by friendly "
+        "name. Examples include Notepad, Calculator, File "
+        "Explorer, Google Chrome, Visual Studio Code, Discord, "
+        "Telegram, or other applications discovered from the "
+        "Windows Start Menu. Command interpreters such as CMD, "
+        "PowerShell, Windows Terminal, and WSL are intentionally "
+        "blocked. Use list_applications if the correct installed "
+        "application name is unknown."
     )
 
     required_capability = Capability.OPEN_APPLICATION
 
-    parameters_schema: ClassVar[dict[str, object]] = {
+    parameters_schema: ClassVar[
+        dict[
+            str,
+            object,
+        ]
+    ] = {
         "type": "object",
         "properties": {
             "application": {
                 "type": "string",
                 "description": (
-                    "Friendly application name, such as "
-                    "'notepad', 'calculator', or "
-                    "'file explorer'."
+                    "Friendly installed application name. "
+                    "Examples: 'notepad', 'chrome', "
+                    "'VS Code', 'Discord', or 'Telegram'."
                 ),
             },
         },
@@ -85,90 +64,14 @@ class OpenApplicationTool(Tool):
         "additionalProperties": False,
     }
 
-    _APPLICATIONS: ClassVar[
-        dict[str, ApplicationDefinition]
-    ] = {
-        # -----------------------------
-        # Notepad
-        # -----------------------------
-        "notepad": ApplicationDefinition(
-            name="Notepad",
-            relative_executable=Path(
-                "System32"
-            )
-            / "notepad.exe",
-        ),
-        "text editor": ApplicationDefinition(
-            name="Notepad",
-            relative_executable=Path(
-                "System32"
-            )
-            / "notepad.exe",
-        ),
-
-        # -----------------------------
-        # Calculator
-        # -----------------------------
-        "calculator": ApplicationDefinition(
-            name="Calculator",
-            relative_executable=Path(
-                "System32"
-            )
-            / "calc.exe",
-        ),
-        "calc": ApplicationDefinition(
-            name="Calculator",
-            relative_executable=Path(
-                "System32"
-            )
-            / "calc.exe",
-        ),
-
-        # -----------------------------
-        # File Explorer
-        # -----------------------------
-        "file explorer": ApplicationDefinition(
-            name="File Explorer",
-            relative_executable=Path(
-                "explorer.exe"
-            ),
-        ),
-        "explorer": ApplicationDefinition(
-            name="File Explorer",
-            relative_executable=Path(
-                "explorer.exe"
-            ),
-        ),
-    }
-
     def __init__(
         self,
-        windows_root: Path | None = None,
+        catalog: ApplicationCatalog | None = None,
     ) -> None:
-        """
-        Use the real Windows directory by default.
-
-        Tests may inject a temporary fake Windows directory.
-        """
-
-        if windows_root is None:
-            windows_directory = os.environ.get(
-                "WINDIR"
-            )
-
-            if windows_directory is None:
-                raise RuntimeError(
-                    "Windows directory could not be determined."
-                )
-
-            windows_root = Path(
-                windows_directory
-            )
-
-        self.windows_root = (
-            windows_root
-            .expanduser()
-            .resolve()
+        self.catalog = (
+            catalog
+            if catalog is not None
+            else ApplicationCatalog()
         )
 
     def execute(
@@ -176,7 +79,7 @@ class OpenApplicationTool(Tool):
         arguments: Mapping[str, object],
     ) -> object:
         """
-        Launch exactly one trusted application.
+        Open exactly one catalog-approved application.
         """
 
         raw_application = arguments.get(
@@ -191,67 +94,30 @@ class OpenApplicationTool(Tool):
                 "'application' must be a string."
             )
 
-        normalized_name = " ".join(
+        entry = self.catalog.resolve(
             raw_application
-            .strip()
-            .casefold()
-            .split()
         )
-
-        if not normalized_name:
-            raise ValueError(
-                "'application' cannot be empty."
-            )
-
-        definition = self._APPLICATIONS.get(
-            normalized_name
-        )
-
-        if definition is None:
-            supported = (
-                "Notepad, Calculator, File Explorer"
-            )
-
-            raise ValueError(
-                "Unsupported application. "
-                f"Currently supported: {supported}."
-            )
-
-        executable = (
-            self.windows_root
-            / definition.relative_executable
-        ).resolve()
-
-        # The executable comes from our trusted internal
-        # catalog, not from model-generated input.
-        if not executable.is_file():
-            raise FileNotFoundError(
-                "Application executable was not found: "
-                f"{executable}"
-            )
 
         try:
-            process = subprocess.Popen(
-                [
-                    str(
-                        executable
-                    )
-                ],
-                shell=False,
+            # os.startfile asks Windows to launch the trusted
+            # executable or Start Menu shortcut.
+            #
+            # The path comes entirely from ApplicationCatalog,
+            # never from model input.
+            os.startfile(  # type: ignore[attr-defined]
+                str(
+                    entry.launch_path
+                )
             )
 
         except OSError as exc:
             raise OSError(
-                f"Could not open {definition.name}."
+                f"Could not open {entry.name}."
             ) from exc
 
         return {
             "ok": True,
             "action": "application_opened",
-            "application": definition.name,
-            "executable": str(
-                executable
-            ),
-            "pid": process.pid,
+            "application": entry.name,
+            "source": entry.source,
         }
-    
