@@ -12,30 +12,32 @@ def main() -> None:
     """
     Temporary command-line interface for JARVIS.
 
-    The CLI is only an interface.
+    The CLI itself contains very little business logic.
 
-    The real logic remains inside JarvisApplication,
-    AgentService, ToolService and the security layer.
+    Real behavior lives inside:
+    - JarvisApplication
+    - AgentService
+    - ToolService
+    - PermissionPolicy
     """
 
     settings = load_settings()
 
-    # Make sure the configured workspace exists.
     settings.workspace_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    # Build the complete JARVIS application.
-    app = build_application(settings)
+    app = build_application(
+        settings
+    )
 
-    # Build a system prompt using the tools that
-    # JARVIS actually has registered.
     system_prompt = build_system_prompt(
         app.tool_service.registry,
     )
 
     print("JARVIS Core v0.1")
+
     print(
         f"Workspace: "
         f"{settings.workspace_dir.resolve()}"
@@ -82,7 +84,7 @@ def main() -> None:
             continue
 
         # -------------------------------------------------
-        # Exit
+        # Exit JARVIS
         # -------------------------------------------------
 
         if command in {
@@ -114,18 +116,23 @@ def main() -> None:
             )
 
             print(
+                "  new             "
+                "Start a new conversation"
+            )
+
+            print(
                 "  system          "
                 "Show basic computer information"
             )
 
             print(
                 "  read <file>     "
-                "Read a file from the workspace"
+                "Read a workspace file"
             )
 
             print(
                 "  list [folder]   "
-                "List files in the workspace"
+                "List workspace files"
             )
 
             print(
@@ -143,19 +150,29 @@ def main() -> None:
             print(
                 "JARVIS Core is running."
             )
+
+            print(
+                "Conversation messages:",
+                app.conversation_message_count(),
+            )
+
             continue
 
         # -------------------------------------------------
-        # Natural-language JARVIS request
-        #
-        # THIS IS NOW THE AGENT PATH.
-        #
-        # Model
-        #   -> ModelToolCall
-        #   -> ToolRequest
-        #   -> ToolService
-        #   -> PermissionPolicy
-        #   -> ToolExecutor
+        # Start a fresh chat
+        # -------------------------------------------------
+
+        if command == "new":
+            app.new_conversation()
+
+            print(
+                "Started a new conversation."
+            )
+
+            continue
+
+        # -------------------------------------------------
+        # Natural-language JARVIS agent
         # -------------------------------------------------
 
         if command.startswith(
@@ -187,8 +204,7 @@ def main() -> None:
 
             except ConfirmationRequiredError:
                 print(
-                    "This action requires "
-                    "confirmation."
+                    "This action requires confirmation."
                 )
 
             except KeyError as exc:
@@ -208,7 +224,7 @@ def main() -> None:
 
             except ValueError as exc:
                 print(
-                    f"Invalid tool request: {exc}"
+                    f"Invalid request: {exc}"
                 )
 
             except (
@@ -222,7 +238,7 @@ def main() -> None:
             continue
 
         # -------------------------------------------------
-        # Direct system-info command
+        # Direct system information command
         # -------------------------------------------------
 
         if command == "system":
@@ -261,7 +277,7 @@ def main() -> None:
             continue
 
         # -------------------------------------------------
-        # Direct list-directory command
+        # Direct directory listing command
         # -------------------------------------------------
 
         if (
@@ -320,7 +336,7 @@ def main() -> None:
             continue
 
         # -------------------------------------------------
-        # Direct read-file command
+        # Direct file reading command
         # -------------------------------------------------
 
         if command.startswith(
@@ -366,10 +382,6 @@ def main() -> None:
                 )
 
             continue
-
-        # -------------------------------------------------
-        # Unknown command
-        # -------------------------------------------------
 
         print(
             "Unknown command. "

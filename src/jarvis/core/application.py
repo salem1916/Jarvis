@@ -1,4 +1,5 @@
 from jarvis.core.agent_service import AgentService
+from jarvis.core.conversation import Conversation
 from jarvis.core.tool_request import ToolRequest
 from jarvis.models.base import (
     ModelProvider,
@@ -12,9 +13,14 @@ class JarvisApplication:
     """
     Main application facade for JARVIS.
 
-    Interfaces such as the CLI and future desktop app
-    communicate with this class instead of directly
-    controlling models or tools.
+    Interfaces such as:
+
+    - CLI
+    - future desktop UI
+    - future mobile/dashboard interfaces
+
+    should communicate with this class instead of
+    directly controlling tools or model providers.
     """
 
     def __init__(
@@ -25,20 +31,24 @@ class JarvisApplication:
         self.tool_service = tool_service
         self.model_provider = model_provider
 
-        # AgentService connects AI reasoning to the
-        # existing secured tool system.
         self.agent_service = AgentService(
             model_provider=model_provider,
             tool_service=tool_service,
         )
+
+        # Current active chat session.
+        #
+        # Later we will support several conversations
+        # identified by IDs and persisted in PostgreSQL.
+        self.conversation = Conversation()
 
     def execute_tool(
         self,
         request: ToolRequest,
     ) -> object:
         """
-        Execute a tool directly through JARVIS's
-        trusted tool/security system.
+        Execute a direct tool request through JARVIS's
+        trusted security pipeline.
         """
 
         return self.tool_service.execute(
@@ -51,11 +61,10 @@ class JarvisApplication:
         system_prompt: str | None = None,
     ) -> ModelResponse:
         """
-        Perform a normal model request without
-        automatic tool execution.
+        Perform a simple stateless model request.
 
-        We keep this because some future JARVIS tasks
-        may only require the model.
+        This remains available for internal operations
+        that do not require agent tools or chat history.
         """
 
         request = ModelRequest(
@@ -73,10 +82,36 @@ class JarvisApplication:
         system_prompt: str | None = None,
     ) -> str:
         """
-        Run the secured AI + tool orchestration path.
+        Main conversational JARVIS path.
+
+        This uses:
+        - conversation history
+        - AI reasoning
+        - tool calling
+        - permissions
+        - multi-step execution
         """
 
         return self.agent_service.run(
             prompt=prompt,
             system_prompt=system_prompt,
+            conversation=self.conversation,
+        )
+
+    def new_conversation(self) -> None:
+        """
+        Clear the current in-memory chat and start fresh.
+        """
+
+        self.conversation.clear()
+
+    def conversation_message_count(self) -> int:
+        """
+        Number of messages in the current chat.
+
+        Mostly useful for debugging and status displays.
+        """
+
+        return len(
+            self.conversation
         )

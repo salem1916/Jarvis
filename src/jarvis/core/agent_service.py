@@ -1,5 +1,6 @@
 import json
 
+from jarvis.core.conversation import Conversation
 from jarvis.core.tool_request import ToolRequest
 from jarvis.models.base import (
     ModelMessage,
@@ -12,9 +13,8 @@ from jarvis.tools.service import ToolService
 
 class AgentLoopLimitError(RuntimeError):
     """
-    Raised when an AI keeps requesting tools for too long.
-
-    This prevents accidental infinite execution loops.
+    Raised when the model continues requesting tools
+    beyond JARVIS's configured safety limit.
     """
 
 
@@ -24,7 +24,7 @@ class AgentService:
 
     Architecture:
 
-        Salem
+        User
           ↓
         Model
           ↓
@@ -38,13 +38,14 @@ class AgentService:
           ↓
         ToolExecutor
           ↓
-        REAL tool result
+        Real result
           ↓
-        role="tool" message
+        role="tool"
           ↓
-        Model continues reasoning
+        Model continues
 
-    The model never directly executes computer actions.
+    A Conversation object can now preserve this history
+    across several separate user requests.
     """
 
     def __init__(
@@ -66,17 +67,30 @@ class AgentService:
         self,
         prompt: str,
         system_prompt: str | None = None,
+        conversation: Conversation | None = None,
     ) -> str:
         """
         Execute one natural-language JARVIS request.
 
-        Unlike the old implementation, we preserve the
-        real model/tool conversation instead of rebuilding
-        a textual prompt after each tool call.
+        If a Conversation is supplied, previous successful
+        messages are included.
+
+        This means separate calls such as:
+
+            "What files do I have?"
+
+        followed by:
+
+            "What does it contain?"
+
+        can share context.
+
+        Conversation changes are committed only after
+        successful completion.
         """
 
         # -------------------------------------------------
-        # Expose only REAL registered JARVIS tools.
+        # REAL tools registered in JARVIS
         # -------------------------------------------------
 
         available_tools = [
@@ -89,18 +103,46 @@ class AgentService:
         ]
 
         # -------------------------------------------------
-        # Build real conversation history.
+        # Start from previous conversation history.
+        #
+        # We work on a COPY.
+        #
+        # If the request later crashes or is denied,
+        # the original conversation remains unchanged.
         # -------------------------------------------------
 
-        messages: list[ModelMessage] = []
+        if conversation is not None:
+            messages = conversation.snapshot()
+        else:
+            messages = []
 
-        if system_prompt:
-            messages.append(
+        # -------------------------------------------------
+        # Add the system prompt once.
+        #
+        # We do not want to duplicate it on every
+        # separate "ask" command.
+        # -------------------------------------------------
+
+        has_system_message = any(
+            message.role == "system"
+            for message in messages
+        )
+
+        if (
+            system_prompt
+            and not has_system_message
+        ):
+            messages.insert(
+                0,
                 ModelMessage(
                     role="system",
                     content=system_prompt,
-                )
+                ),
             )
+
+        # -------------------------------------------------
+        # Add the new user request.
+        # -------------------------------------------------
 
         messages.append(
             ModelMessage(
@@ -113,18 +155,13 @@ class AgentService:
 
         while True:
             # ---------------------------------------------
-            # Give the model the COMPLETE conversation:
-            #
-            # system
-            # user
-            # previous assistant tool calls
-            # previous real tool results
+            # Send the FULL conversation to the model.
             # ---------------------------------------------
 
             response = self.model_provider.generate(
                 ModelRequest(
-                    # Kept for compatibility with our generic
-                    # ModelRequest API.
+                    # Kept for compatibility with our
+                    # provider-independent model API.
                     prompt=prompt,
 
                     messages=messages,
@@ -134,10 +171,8 @@ class AgentService:
             )
 
             # ---------------------------------------------
-            # Save the assistant response itself.
-            #
-            # This is important because Ollama's next turn
-            # needs to see which tools the assistant asked for.
+            # Preserve the assistant's exact response
+            # and any tool calls it requested.
             # ---------------------------------------------
 
             messages.append(
@@ -149,14 +184,21 @@ class AgentService:
             )
 
             # ---------------------------------------------
-            # No tool requests means the agent is finished.
+            # No tool call means the request is complete.
             # ---------------------------------------------
 
             if not response.tool_calls:
+                # Only now do we commit the completed
+                # conversation state.
+                if conversation is not None:
+                    conversation.replace(
+                        messages
+                    )
+
                 return response.text
 
             # ---------------------------------------------
-            # Safety limit BEFORE another execution round.
+            # Infinite-loop protection.
             # ---------------------------------------------
 
             if tool_rounds_used >= self.max_tool_rounds:
@@ -166,8 +208,10 @@ class AgentService:
                 )
 
             # ---------------------------------------------
-            # Execute every requested tool through the
-            # existing trusted JARVIS security pipeline.
+            # Execute model-requested tools.
+            #
+            # They still go through the REAL security
+            # pipeline.
             # ---------------------------------------------
 
             for tool_call in response.tool_calls:
@@ -181,15 +225,8 @@ class AgentService:
                 )
 
                 # -----------------------------------------
-                # Add the REAL tool result as an actual
-                # role="tool" message.
-                #
-                # The model now knows:
-                #
-                # "I requested list_directory and THIS
-                # was the actual result."
-                #
-                # rather than receiving a rewritten prompt.
+                # Add the verified result to conversation
+                # history as a native tool message.
                 # -----------------------------------------
 
                 messages.append(
@@ -209,16 +246,12 @@ class AgentService:
         result: object,
     ) -> str:
         """
-        Serialize REAL tool results deterministically.
+        Convert real tool results into model-friendly text.
 
-        Lists and dictionaries become JSON so the model
-        receives clear structured data.
+        Lists and dictionaries become JSON.
 
-        File contents and other strings remain unchanged.
-
-        Tool output is still considered untrusted DATA.
-        The system prompt tells the model not to obey
-        instructions found inside tool results.
+        Plain strings, such as file contents, remain
+        plain strings.
         """
 
         if isinstance(
