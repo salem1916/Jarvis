@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from jarvis.core.action_confirmation import ActionConfirmationHandler
 from jarvis.core.agent_service import AgentService
 from jarvis.core.conversation import Conversation
 from jarvis.core.tool_request import ToolRequest
@@ -21,7 +22,7 @@ class JarvisApplication:
 
     CLI, Desktop UI, and future interfaces communicate
     through this class rather than reaching directly into
-    tools/security/model internals.
+    tools, security, or model internals.
     """
 
     def __init__(
@@ -47,14 +48,17 @@ class JarvisApplication:
     def execute_tool(
         self,
         request: ToolRequest,
+        *,
+        confirmed: bool = False,
     ) -> object:
         """
-        Execute a direct tool request through the trusted
-        JARVIS security pipeline.
+        Execute a direct tool request through JARVIS's
+        trusted execution pipeline.
         """
 
         return self.tool_service.execute(
-            request
+            request,
+            confirmed=confirmed,
         )
 
     def ask(
@@ -79,24 +83,29 @@ class JarvisApplication:
         self,
         prompt: str,
         system_prompt: str | None = None,
+        confirmation_handler: ActionConfirmationHandler | None = None,
     ) -> str:
         """
         Main conversational agent path.
+
+        A frontend may provide a trusted confirmation handler
+        for actions requiring explicit human approval.
         """
 
         return self.agent_service.run(
             prompt=prompt,
             system_prompt=system_prompt,
             conversation=self.conversation,
+            confirmation_handler=confirmation_handler,
         )
 
     def new_conversation(
         self,
     ) -> None:
         """
-        Clear conversation history ONLY.
+        Clear conversation history only.
 
-        Filesystem permissions are intentionally unaffected.
+        Permission state remains unchanged.
         """
 
         self.conversation.clear()
@@ -105,7 +114,7 @@ class JarvisApplication:
         self,
     ) -> int:
         """
-        Return current conversation-message count.
+        Return current internal conversation length.
         """
 
         return len(
@@ -128,7 +137,7 @@ class JarvisApplication:
         self,
     ) -> tuple[Path, ...]:
         """
-        Return all currently approved filesystem roots.
+        Return every currently approved read root.
         """
 
         policy = self._require_filesystem_scope_policy()
@@ -139,7 +148,7 @@ class JarvisApplication:
         self,
     ) -> bool:
         """
-        Return whether user-approved scopes survive restart.
+        Return whether external filesystem scopes persist.
         """
 
         return self.filesystem_scope_store is not None
@@ -151,8 +160,7 @@ class JarvisApplication:
         """
         Grant read access to one additional directory.
 
-        WRITE_FILE and DELETE_FILE remain completely separate
-        capabilities and are NOT granted here.
+        WRITE_FILE and DELETE_FILE remain separate.
         """
 
         policy = self._require_filesystem_scope_policy()
@@ -168,7 +176,7 @@ class JarvisApplication:
         path: Path,
     ) -> None:
         """
-        Remove one previously granted external read scope.
+        Remove a previously approved external read scope.
         """
 
         policy = self._require_filesystem_scope_policy()
@@ -183,10 +191,7 @@ class JarvisApplication:
         self,
     ) -> None:
         """
-        Save additional approved folders when persistence
-        is enabled.
-
-        The permanent workspace is intentionally excluded.
+        Persist user-approved roots when configured.
         """
 
         if self.filesystem_scope_store is None:
@@ -208,10 +213,7 @@ class JarvisApplication:
         self,
     ) -> FilesystemScopePolicy:
         """
-        Return the configured filesystem policy.
-
-        Missing policy means the application was assembled
-        incorrectly.
+        Return the configured filesystem scope policy.
         """
 
         if self.filesystem_scope_policy is None:

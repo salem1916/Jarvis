@@ -1,5 +1,10 @@
 import json
 
+from jarvis.core.action_confirmation import (
+    ActionConfirmationHandler,
+    ActionConfirmationRequest,
+    ActionDeclinedError,
+)
 from jarvis.core.conversation import Conversation
 from jarvis.core.tool_request import ToolRequest
 from jarvis.models.base import (
@@ -26,10 +31,9 @@ class AgentService:
     """
     Secure multi-turn JARVIS agent.
 
-    The model may REQUEST actions, but it never receives
-    direct authority over the computer.
+    Model requests always remain untrusted.
 
-    Every action still passes through:
+    Execution path:
 
         Model
           ↓
@@ -40,13 +44,18 @@ class AgentService:
         PermissionPolicy
           ↓
         ToolExecutor
+
+    Actions requiring confirmation additionally become:
+
+        ConfirmationRequiredError
           ↓
-        Tool
+        trusted ActionConfirmationHandler
+          ↓
+        human approval
+          ↓
+        retry exact request with confirmed=True
 
-    Recoverable execution failures may be returned to the
-    model so it can correct mistakes.
-
-    Security decisions are NEVER recoverable by the model.
+    The model cannot generate the confirmed flag itself.
     """
 
     def __init__(
@@ -69,21 +78,14 @@ class AgentService:
         prompt: str,
         system_prompt: str | None = None,
         conversation: Conversation | None = None,
+        confirmation_handler: ActionConfirmationHandler | None = None,
     ) -> str:
         """
         Execute one natural-language JARVIS request.
 
-        Conversation history is committed only when the
+        Conversation changes are committed only after the
         complete request succeeds.
-
-        This prevents failed requests from leaving a
-        half-completed conversation behind.
         """
-
-        # -------------------------------------------------
-        # Build the provider-independent tool definitions
-        # exposed to the model.
-        # -------------------------------------------------
 
         available_tools = [
             ModelToolDefinition(
@@ -94,11 +96,6 @@ class AgentService:
             for tool in self.tool_service.registry.tools()
         ]
 
-        # -------------------------------------------------
-        # Start from previous conversation history if one
-        # exists.
-        # -------------------------------------------------
-
         if conversation is not None:
             messages = conversation.snapshot()
 
@@ -106,7 +103,7 @@ class AgentService:
             messages = []
 
         # -------------------------------------------------
-        # Add the trusted system prompt only once.
+        # Add trusted system instructions only once.
         # -------------------------------------------------
 
         has_system_message = any(
@@ -126,10 +123,6 @@ class AgentService:
                 ),
             )
 
-        # -------------------------------------------------
-        # Add the new user request.
-        # -------------------------------------------------
-
         messages.append(
             ModelMessage(
                 role="user",
@@ -140,10 +133,6 @@ class AgentService:
         tool_rounds_used = 0
 
         while True:
-            # -------------------------------------------------
-            # Ask the model what to do next.
-            # -------------------------------------------------
-
             response = self.model_provider.generate(
                 ModelRequest(
                     prompt=prompt,
@@ -152,8 +141,6 @@ class AgentService:
                 )
             )
 
-            # Preserve the assistant's exact response and
-            # requested tool calls.
             messages.append(
                 ModelMessage(
                     role="assistant",
@@ -162,10 +149,8 @@ class AgentService:
                 )
             )
 
-            # -------------------------------------------------
-            # No tool calls = final answer.
-            # -------------------------------------------------
-
+            # No tool calls means the model produced
+            # its final answer.
             if not response.tool_calls:
                 if conversation is not None:
                     conversation.replace(
@@ -174,19 +159,11 @@ class AgentService:
 
                 return response.text
 
-            # -------------------------------------------------
-            # Infinite-loop protection.
-            # -------------------------------------------------
-
             if tool_rounds_used >= self.max_tool_rounds:
                 raise AgentLoopLimitError(
                     "JARVIS reached the maximum number "
                     "of tool rounds for this request."
                 )
-
-            # -------------------------------------------------
-            # Execute every requested tool.
-            # -------------------------------------------------
 
             for tool_call in response.tool_calls:
                 request = ToolRequest(
@@ -195,8 +172,9 @@ class AgentService:
                 )
 
                 try:
-                    result = self.tool_service.execute(
-                        request
+                    result = self._execute_tool_request(
+                        request=request,
+                        confirmation_handler=confirmation_handler,
                     )
 
                     tool_content = self._serialize_tool_result(
@@ -204,13 +182,10 @@ class AgentService:
                     )
 
                 # =============================================
-                # SECURITY EXCEPTIONS
+                # SECURITY FAILURES
                 #
-                # These MUST escape immediately.
-                #
-                # The AI is never allowed to reason around,
-                # retry around, or reinterpret a security
-                # denial.
+                # Never send these back to the model as a
+                # recoverable observation.
                 # =============================================
 
                 except PermissionDeniedError:
@@ -219,18 +194,13 @@ class AgentService:
                 except ConfirmationRequiredError:
                     raise
 
+                except ActionDeclinedError:
+                    raise
+
                 # =============================================
-                # RECOVERABLE EXECUTION ERRORS
+                # NORMAL EXECUTION MISTAKES
                 #
-                # Examples:
-                #
-                # - wrong file path
-                # - missing directory
-                # - invalid calculator expression
-                # - malformed tool argument
-                #
-                # These are returned to the model so it gets
-                # another opportunity to correct its mistake.
+                # These may be corrected by another model turn.
                 # =============================================
 
                 except (
@@ -243,11 +213,6 @@ class AgentService:
                         error=exc,
                     )
 
-                # -------------------------------------------------
-                # Return either the real result or the recoverable
-                # error as a native tool message.
-                # -------------------------------------------------
-
                 messages.append(
                     ModelMessage(
                         role="tool",
@@ -258,13 +223,76 @@ class AgentService:
 
             tool_rounds_used += 1
 
+    def _execute_tool_request(
+        self,
+        request: ToolRequest,
+        confirmation_handler: ActionConfirmationHandler | None,
+    ) -> object:
+        """
+        Execute one tool request with optional human approval.
+
+        First execution uses normal policy enforcement.
+
+        If confirmation is required:
+
+            no handler
+                -> propagate ConfirmationRequiredError
+
+            handler rejects
+                -> ActionDeclinedError
+
+            handler approves
+                -> execute the SAME request exactly once
+                   with confirmed=True
+        """
+
+        try:
+            return self.tool_service.execute(
+                request
+            )
+
+        except ConfirmationRequiredError:
+            if confirmation_handler is None:
+                raise
+
+            tool = self.tool_service.registry.get(
+                request.tool_name
+            )
+
+            confirmation = ActionConfirmationRequest(
+                tool_name=request.tool_name,
+                capability=tool.required_capability,
+                arguments=dict(
+                    request.arguments
+                ),
+            )
+
+            approved = confirmation_handler.confirm(
+                confirmation
+            )
+
+            if not approved:
+                raise ActionDeclinedError(
+                    "The user declined the requested action."
+                )
+
+            # IMPORTANT:
+            #
+            # confirmed=True only retries this exact immediate
+            # ToolRequest.
+            #
+            # ToolExecutor will STILL reject a DENY decision.
+            return self.tool_service.execute(
+                request,
+                confirmed=True,
+            )
+
     @staticmethod
     def _serialize_tool_result(
         result: object,
     ) -> str:
         """
-        Convert successful tool output into text suitable
-        for the model conversation.
+        Convert successful tool output into model-friendly text.
         """
 
         if isinstance(
@@ -288,13 +316,8 @@ class AgentService:
         error: Exception,
     ) -> str:
         """
-        Convert a RECOVERABLE execution error into structured
-        tool feedback.
-
-        Important:
-
-        PermissionDeniedError and
-        ConfirmationRequiredError never reach this method.
+        Convert a recoverable execution error into structured
+        model feedback.
         """
 
         payload: dict[str, object] = {
@@ -310,8 +333,6 @@ class AgentService:
             },
         }
 
-        # Filesystem mistakes get an additional hint telling
-        # the model how to discover the real approved paths.
         if tool_name in {
             "read_file",
             "list_directory",

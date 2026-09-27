@@ -4,6 +4,24 @@ from jarvis.tools.registry import ToolRegistry
 
 
 class ToolService:
+    """
+    Trusted gateway between JARVIS orchestration and tools.
+
+    Responsibilities:
+
+        ToolRequest
+            ↓
+        ToolRegistry
+            ↓
+        ToolExecutor
+            ↓
+        PermissionPolicy
+            ↓
+        Tool
+
+    The model never interacts with ToolExecutor directly.
+    """
+
     def __init__(
         self,
         registry: ToolRegistry,
@@ -12,11 +30,27 @@ class ToolService:
         self.registry = registry
         self.executor = executor
 
-    def execute(self, request: ToolRequest) -> object:
-        tool = self.registry.get(request.tool_name)
+    def execute(
+        self,
+        request: ToolRequest,
+        *,
+        confirmed: bool = False,
+    ) -> object:
+        """
+        Execute one structured tool request.
+
+        `confirmed=True` is used only by trusted JARVIS
+        orchestration after explicit human approval.
+
+        It does not bypass a DENY decision.
+        """
+
+        tool = self.registry.get(
+            request.tool_name
+        )
 
         return self.executor.execute(
             tool,
             request.arguments,
+            confirmed=confirmed,
         )
-    
