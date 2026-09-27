@@ -8,6 +8,7 @@ from jarvis.security.policy import PermissionPolicy
 from jarvis.tools.calculator import CalculatorTool
 from jarvis.tools.executor import ToolExecutor
 from jarvis.tools.list_directory import ListDirectoryTool
+from jarvis.tools.list_filesystem_scopes import ListFilesystemScopesTool
 from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.service import ToolService
@@ -19,6 +20,9 @@ def build_model_provider(
 ) -> ModelProvider:
     """
     Build the configured AI model backend.
+
+    The rest of JARVIS communicates through ModelProvider
+    rather than depending directly on Ollama.
     """
 
     if settings.model_provider == "ollama":
@@ -37,11 +41,18 @@ def build_application(
     settings: JarvisSettings,
 ) -> JarvisApplication:
     """
-    Assemble the JARVIS application.
+    Assemble the complete JARVIS application.
 
-    The filesystem scope policy is shared by all filesystem
-    tools so changing an approved root immediately affects
-    every filesystem operation.
+    Security uses two separate concepts:
+
+        Capability
+            What kind of operation may happen?
+
+        FilesystemScopePolicy
+            Where may that operation happen?
+
+    READ_FILE therefore does not automatically mean
+    unrestricted access to the computer.
     """
 
     # -------------------------------------------------
@@ -49,7 +60,7 @@ def build_application(
     # -------------------------------------------------
 
     allowed_capabilities: set[Capability] = {
-        # Pure deterministic local computation.
+        # Safe deterministic local computation.
         Capability.CALCULATE,
     }
 
@@ -70,14 +81,10 @@ def build_application(
     # -------------------------------------------------
     # Filesystem resource scopes
     #
-    # Initially ONLY the workspace is included.
+    # Workspace is always available.
     #
-    # Later the user may add:
-    #
-    # Documents
-    # Downloads
-    # Desktop
-    # custom folders
+    # Additional user-approved folders can later be
+    # added through the desktop Permissions page.
     # -------------------------------------------------
 
     filesystem_scope_policy = FilesystemScopePolicy(
@@ -89,6 +96,14 @@ def build_application(
     # -------------------------------------------------
 
     registry = ToolRegistry()
+
+    # The model can discover which real folders have
+    # already been approved.
+    registry.register(
+        ListFilesystemScopesTool(
+            filesystem_scope_policy
+        )
+    )
 
     registry.register(
         ReadFileTool(
@@ -113,7 +128,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Secure execution layer
+    # Secure tool execution
     # -------------------------------------------------
 
     executor = ToolExecutor(
@@ -126,7 +141,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Model backend
+    # AI backend
     # -------------------------------------------------
 
     model_provider = build_model_provider(
