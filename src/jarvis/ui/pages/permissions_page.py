@@ -466,7 +466,7 @@ class PermissionsPage(QWidget):
         self,
     ) -> QWidget:
         """
-        Application actions are separated by risk.
+        Application capabilities are separated by risk.
 
         OPEN_APPLICATION
             launch trusted applications
@@ -475,7 +475,10 @@ class PermissionsPage(QWidget):
             focus/minimize/maximize/restore
 
         CLOSE_APPLICATION
-            request graceful application close
+            request graceful close
+
+        TYPE_TEXT
+            enter literal text into a resolved visible window
 
         RUN_COMMAND
             still disabled
@@ -515,10 +518,10 @@ class PermissionsPage(QWidget):
         )
 
         explanation = QLabel(
-            "JARVIS separates launching, window control, and "
-            "closing applications into independent permissions. "
-            "Closing uses a normal Windows close request and "
-            "does not force-kill processes."
+            "Launching, window control, closing applications, "
+            "and typing text are independent permissions. "
+            "Typing supports literal text only and does not "
+            "grant arbitrary keyboard shortcuts or commands."
         )
 
         explanation.setWordWrap(
@@ -635,6 +638,30 @@ class PermissionsPage(QWidget):
         )
 
         # -------------------------------------------------
+        # TYPE TEXT
+        # -------------------------------------------------
+
+        self.type_text_mode_combo = (
+            self._build_permission_mode_combo(
+                Capability.TYPE_TEXT
+            )
+        )
+
+        grid.addWidget(
+            QLabel(
+                "Type text"
+            ),
+            4,
+            0,
+        )
+
+        grid.addWidget(
+            self.type_text_mode_combo,
+            4,
+            1,
+        )
+
+        # -------------------------------------------------
         # RUN COMMAND
         # -------------------------------------------------
 
@@ -642,7 +669,7 @@ class PermissionsPage(QWidget):
             QLabel(
                 "Run commands"
             ),
-            4,
+            5,
             0,
         )
 
@@ -652,7 +679,7 @@ class PermissionsPage(QWidget):
                     Capability.RUN_COMMAND
                 )
             ),
-            4,
+            5,
             1,
         )
 
@@ -833,8 +860,8 @@ class PermissionsPage(QWidget):
                 "JARVIS will be able to focus, minimize, "
                 "maximize, and restore visible windows without "
                 "asking each time.\n\n"
-                "Closing applications is still controlled by "
-                "a separate permission.\n\n"
+                "Closing applications and typing remain "
+                "separate permissions.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
             )
@@ -847,8 +874,21 @@ class PermissionsPage(QWidget):
                 "close requests to visible applications without "
                 "asking each time.\n\n"
                 "Applications may still show Save or confirmation "
-                "dialogs. JARVIS does NOT force-kill processes "
-                "with this capability.\n\n"
+                "dialogs. This does not enable force killing.\n\n"
+                "This setting survives JARVIS restarts.\n\n"
+                "Continue?"
+            )
+
+        if capability is Capability.TYPE_TEXT:
+            return (
+                f'You are about to set "{action_name}" to '
+                "automatic execution.\n\n"
+                "JARVIS will be able to type literal text into "
+                "resolved visible application windows without "
+                "asking each time.\n\n"
+                "This can modify documents, source code, forms, "
+                "or messages. Arbitrary hotkeys and command "
+                "execution are still NOT enabled.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
             )
@@ -905,6 +945,9 @@ class PermissionsPage(QWidget):
 
             Capability.CLOSE_APPLICATION:
                 "Close applications",
+
+            Capability.TYPE_TEXT:
+                "Type text",
         }
 
         return names.get(
@@ -1220,7 +1263,7 @@ class PermissionsPage(QWidget):
         )
 
     # =====================================================
-    # STATIC STATUS LABELS
+    # STATUS LABELS
     # =====================================================
 
     @staticmethod

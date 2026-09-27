@@ -29,6 +29,10 @@ from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.service import ToolService
 from jarvis.tools.system_info import SystemInfoTool
 from jarvis.tools.trash_file import TrashFileTool
+from jarvis.tools.type_text import (
+    TypeTextTool,
+    Win32TextInputBackend,
+)
 from jarvis.tools.window_catalog import (
     Win32WindowBackend,
     WindowCatalog,
@@ -83,27 +87,6 @@ def build_application(
     # =================================================
     # USER-CONFIGURABLE SIDE-EFFECT CAPABILITIES
     # =================================================
-    #
-    # Safe defaults:
-    #
-    # WRITE_FILE
-    #     Ask
-    #
-    # DELETE_FILE
-    #     Ask
-    #
-    # OPEN_APPLICATION
-    #     Ask
-    #
-    # CONTROL_APPLICATION
-    #     Ask
-    #
-    # CLOSE_APPLICATION
-    #     Ask
-    #
-    # Closing is deliberately separate from ordinary window
-    # manipulation because closing may affect unsaved work.
-    # =================================================
 
     default_modes: dict[
         Capability,
@@ -122,6 +105,9 @@ def build_application(
             PermissionMode.ASK,
 
         Capability.CLOSE_APPLICATION:
+            PermissionMode.ASK,
+
+        Capability.TYPE_TEXT:
             PermissionMode.ASK,
     }
 
@@ -177,10 +163,6 @@ def build_application(
                 capability
             )
 
-    # =================================================
-    # SECURITY POLICY
-    # =================================================
-
     permission_policy = PermissionPolicy(
         allowed=allowed_capabilities,
         require_confirmation=confirmation_capabilities,
@@ -208,7 +190,7 @@ def build_application(
     )
 
     # =================================================
-    # APPLICATION DISCOVERY
+    # APPLICATION CATALOG
     # =================================================
 
     application_catalog = ApplicationCatalog()
@@ -223,9 +205,9 @@ def build_application(
         window_backend
     )
 
-    # Closing uses a separate backend because graceful
-    # closing is intentionally a distinct security action.
     close_window_backend = Win32CloseWindowBackend()
+
+    text_input_backend = Win32TextInputBackend()
 
     # =================================================
     # TOOL REGISTRY
@@ -234,7 +216,7 @@ def build_application(
     registry = ToolRegistry()
 
     # -------------------------------------------------
-    # Filesystem discovery
+    # Filesystem discovery / operations
     # -------------------------------------------------
 
     registry.register(
@@ -242,10 +224,6 @@ def build_application(
             filesystem_scope_policy
         )
     )
-
-    # -------------------------------------------------
-    # Filesystem operations
-    # -------------------------------------------------
 
     registry.register(
         ReadFileTool(
@@ -292,7 +270,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Window discovery
+    # Open-window discovery
     # -------------------------------------------------
 
     registry.register(
@@ -302,7 +280,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Non-destructive window control
+    # Non-destructive window state control
     # -------------------------------------------------
 
     registry.register(
@@ -312,13 +290,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Graceful application closing
-    #
-    # Separate capability:
-    #
-    #     CLOSE_APPLICATION
-    #
-    # No force termination.
+    # Graceful close
     # -------------------------------------------------
 
     registry.register(
@@ -329,7 +301,18 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # System / deterministic utilities
+    # Literal text input
+    # -------------------------------------------------
+
+    registry.register(
+        TypeTextTool(
+            catalog=window_catalog,
+            text_backend=text_input_backend,
+        )
+    )
+
+    # -------------------------------------------------
+    # Utilities
     # -------------------------------------------------
 
     registry.register(
@@ -353,17 +336,9 @@ def build_application(
         executor,
     )
 
-    # =================================================
-    # MODEL
-    # =================================================
-
     model_provider = build_model_provider(
         settings
     )
-
-    # =================================================
-    # APPLICATION
-    # =================================================
 
     return JarvisApplication(
         tool_service=tool_service,

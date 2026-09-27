@@ -25,13 +25,17 @@ class Capability(StrEnum):
     CALCULATE = "CALCULATE"
 
     OPEN_APPLICATION = "OPEN_APPLICATION"
+
     CONTROL_APPLICATION = "CONTROL_APPLICATION"
 
-    # Normal graceful application/window closing.
-    #
-    # This is intentionally separate from general window
-    # control because closing may affect unsaved work.
     CLOSE_APPLICATION = "CLOSE_APPLICATION"
+
+    # Literal text entry into a specific visible window.
+    #
+    # This is deliberately separate from ordinary window
+    # control because typing can modify documents, messages,
+    # forms, source code, etc.
+    TYPE_TEXT = "TYPE_TEXT"
 
     RUN_COMMAND = "RUN_COMMAND"
 
