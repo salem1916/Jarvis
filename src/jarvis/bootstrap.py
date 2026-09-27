@@ -19,6 +19,10 @@ from jarvis.tools.close_window import (
 )
 from jarvis.tools.control_window import ControlWindowTool
 from jarvis.tools.executor import ToolExecutor
+from jarvis.tools.keyboard_action import (
+    KeyboardActionTool,
+    Win32KeyboardActionBackend,
+)
 from jarvis.tools.list_applications import ListApplicationsTool
 from jarvis.tools.list_directory import ListDirectoryTool
 from jarvis.tools.list_filesystem_scopes import ListFilesystemScopesTool
@@ -109,6 +113,9 @@ def build_application(
 
         Capability.TYPE_TEXT:
             PermissionMode.ASK,
+
+        Capability.KEYBOARD_ACTION:
+            PermissionMode.ASK,
     }
 
     # =================================================
@@ -196,7 +203,7 @@ def build_application(
     application_catalog = ApplicationCatalog()
 
     # =================================================
-    # WINDOW DISCOVERY / CONTROL
+    # WINDOW / INPUT BACKENDS
     # =================================================
 
     window_backend = Win32WindowBackend()
@@ -209,22 +216,22 @@ def build_application(
 
     text_input_backend = Win32TextInputBackend()
 
+    keyboard_action_backend = Win32KeyboardActionBackend()
+
     # =================================================
     # TOOL REGISTRY
     # =================================================
 
     registry = ToolRegistry()
 
-    # -------------------------------------------------
-    # Filesystem discovery / operations
-    # -------------------------------------------------
-
+    # Filesystem discovery
     registry.register(
         ListFilesystemScopesTool(
             filesystem_scope_policy
         )
     )
 
+    # Filesystem operations
     registry.register(
         ReadFileTool(
             settings.workspace_dir,
@@ -253,10 +260,7 @@ def build_application(
         )
     )
 
-    # -------------------------------------------------
-    # Application discovery / launching
-    # -------------------------------------------------
-
+    # Installed application discovery / launch
     registry.register(
         ListApplicationsTool(
             application_catalog
@@ -269,29 +273,18 @@ def build_application(
         )
     )
 
-    # -------------------------------------------------
-    # Open-window discovery
-    # -------------------------------------------------
-
+    # Open-window discovery / manipulation
     registry.register(
         ListOpenWindowsTool(
             window_catalog
         )
     )
 
-    # -------------------------------------------------
-    # Non-destructive window state control
-    # -------------------------------------------------
-
     registry.register(
         ControlWindowTool(
             window_catalog
         )
     )
-
-    # -------------------------------------------------
-    # Graceful close
-    # -------------------------------------------------
 
     registry.register(
         CloseWindowTool(
@@ -300,10 +293,7 @@ def build_application(
         )
     )
 
-    # -------------------------------------------------
-    # Literal text input
-    # -------------------------------------------------
-
+    # Literal typing
     registry.register(
         TypeTextTool(
             catalog=window_catalog,
@@ -311,10 +301,15 @@ def build_application(
         )
     )
 
-    # -------------------------------------------------
-    # Utilities
-    # -------------------------------------------------
+    # Trusted keyboard actions / shortcuts
+    registry.register(
+        KeyboardActionTool(
+            catalog=window_catalog,
+            keyboard_backend=keyboard_action_backend,
+        )
+    )
 
+    # Utilities
     registry.register(
         SystemInfoTool()
     )
