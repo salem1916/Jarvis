@@ -1,7 +1,16 @@
+from pathlib import Path
+
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -14,14 +23,14 @@ from jarvis.security.policy import PermissionDecision
 
 class PermissionsPage(QWidget):
     """
-    Read-only view of JARVIS's current security policy.
+    JARVIS permissions and filesystem-scope dashboard.
 
-    This page does NOT maintain a second permission state.
+    Permission state comes from the real PermissionPolicy.
 
-    Every status shown here is obtained from the real
-    PermissionPolicy through JarvisApplication.
+    Filesystem read scopes also come from the real
+    FilesystemScopePolicy through JarvisApplication.
 
-    Editable permissions come in the next security stage.
+    The UI does not maintain its own fake permission state.
     """
 
     def __init__(
@@ -33,10 +42,11 @@ class PermissionsPage(QWidget):
         self.jarvis = jarvis
 
         self._build_interface()
+        self._refresh_filesystem_scopes()
 
     def _build_interface(self) -> None:
         """
-        Build the permissions dashboard.
+        Build the complete permissions dashboard.
         """
 
         root_layout = QVBoxLayout(
@@ -54,6 +64,10 @@ class PermissionsPage(QWidget):
             12
         )
 
+        # =================================================
+        # PAGE HEADER
+        # =================================================
+
         title = QLabel(
             "Permissions"
         )
@@ -67,9 +81,9 @@ class PermissionsPage(QWidget):
         )
 
         description = QLabel(
-            "These are the permissions currently enforced "
-            "by the JARVIS security policy. "
-            "They are read-only in this version."
+            "Control what JARVIS is allowed to access. "
+            "Capability permissions and filesystem scopes "
+            "are enforced by the real JARVIS security layer."
         )
 
         description.setWordWrap(
@@ -84,23 +98,9 @@ class PermissionsPage(QWidget):
             description
         )
 
-        scope_notice = QLabel(
-            "Current filesystem scope: "
-            "READ_FILE is restricted to the JARVIS workspace. "
-            "Broader folder scopes will be added later."
-        )
-
-        scope_notice.setWordWrap(
-            True
-        )
-
-        scope_notice.setObjectName(
-            "infoBox"
-        )
-
-        root_layout.addWidget(
-            scope_notice
-        )
+        # =================================================
+        # SCROLLABLE CONTENT
+        # =================================================
 
         scroll = QScrollArea()
 
@@ -129,9 +129,148 @@ class PermissionsPage(QWidget):
             14
         )
 
+        # =================================================
+        # FILESYSTEM SCOPES
+        # =================================================
+
+        scope_section = QWidget()
+
+        scope_section.setObjectName(
+            "permissionSection"
+        )
+
+        scope_layout = QVBoxLayout(
+            scope_section
+        )
+
+        scope_layout.setContentsMargins(
+            18,
+            18,
+            18,
+            18,
+        )
+
+        scope_layout.setSpacing(
+            10
+        )
+
+        scope_title = QLabel(
+            "Filesystem Read Scopes"
+        )
+
+        scope_title.setObjectName(
+            "sectionHeading"
+        )
+
+        scope_layout.addWidget(
+            scope_title
+        )
+
+        scope_description = QLabel(
+            "JARVIS may read only the directories listed below. "
+            "Adding a folder grants read access only. "
+            "It does not grant write or delete permission."
+        )
+
+        scope_description.setWordWrap(
+            True
+        )
+
+        scope_description.setObjectName(
+            "mutedText"
+        )
+
+        scope_layout.addWidget(
+            scope_description
+        )
+
+        session_notice = QLabel(
+            "These additional folder permissions currently "
+            "last only until JARVIS is closed. Persistent "
+            "permission settings will be added later."
+        )
+
+        session_notice.setWordWrap(
+            True
+        )
+
+        session_notice.setObjectName(
+            "infoBox"
+        )
+
+        scope_layout.addWidget(
+            session_notice
+        )
+
+        # -------------------------------------------------
+        # List of approved folders
+        # -------------------------------------------------
+
+        self.scope_list = QListWidget()
+
+        self.scope_list.setObjectName(
+            "scopeList"
+        )
+
+        self.scope_list.currentItemChanged.connect(
+            self._update_remove_button
+        )
+
+        scope_layout.addWidget(
+            self.scope_list
+        )
+
+        # -------------------------------------------------
+        # Add / remove buttons
+        # -------------------------------------------------
+
+        button_row = QHBoxLayout()
+
+        self.add_folder_button = QPushButton(
+            "+ Add Folder"
+        )
+
+        self.add_folder_button.clicked.connect(
+            self._add_folder
+        )
+
+        button_row.addWidget(
+            self.add_folder_button
+        )
+
+        self.remove_folder_button = QPushButton(
+            "Remove Selected"
+        )
+
+        self.remove_folder_button.setDisabled(
+            True
+        )
+
+        self.remove_folder_button.clicked.connect(
+            self._remove_selected_folder
+        )
+
+        button_row.addWidget(
+            self.remove_folder_button
+        )
+
+        button_row.addStretch()
+
+        scope_layout.addLayout(
+            button_row
+        )
+
         content_layout.addWidget(
-            self._build_section(
-                "Filesystem",
+            scope_section
+        )
+
+        # =================================================
+        # CAPABILITY SECTIONS
+        # =================================================
+
+        content_layout.addWidget(
+            self._build_permission_section(
+                "Filesystem Capabilities",
                 [
                     (
                         "Read files",
@@ -150,7 +289,7 @@ class PermissionsPage(QWidget):
         )
 
         content_layout.addWidget(
-            self._build_section(
+            self._build_permission_section(
                 "System & Applications",
                 [
                     (
@@ -174,7 +313,7 @@ class PermissionsPage(QWidget):
         )
 
         content_layout.addWidget(
-            self._build_section(
+            self._build_permission_section(
                 "Browser & External Actions",
                 [
                     (
@@ -198,7 +337,7 @@ class PermissionsPage(QWidget):
         )
 
         content_layout.addWidget(
-            self._build_section(
+            self._build_permission_section(
                 "Local Computation",
                 [
                     (
@@ -220,7 +359,7 @@ class PermissionsPage(QWidget):
             stretch=1,
         )
 
-    def _build_section(
+    def _build_permission_section(
         self,
         title: str,
         permissions: list[
@@ -228,7 +367,7 @@ class PermissionsPage(QWidget):
         ],
     ) -> QWidget:
         """
-        Build one group of permission rows.
+        Build one group of capability permission rows.
         """
 
         section = QWidget()
@@ -307,13 +446,224 @@ class PermissionsPage(QWidget):
 
         return section
 
+    def _refresh_filesystem_scopes(self) -> None:
+        """
+        Refresh the folder list from the REAL
+        FilesystemScopePolicy.
+
+        No folder path is stored only in the UI.
+        """
+
+        self.scope_list.clear()
+
+        scopes = self.jarvis.filesystem_read_scopes()
+
+        if not scopes:
+            return
+
+        workspace = scopes[0]
+
+        for scope in scopes:
+            is_workspace = (
+                scope == workspace
+            )
+
+            if is_workspace:
+                display_text = (
+                    f"Workspace — {scope}"
+                )
+            else:
+                display_text = (
+                    f"Allowed folder — {scope}"
+                )
+
+            item = QListWidgetItem(
+                display_text
+            )
+
+            # Store the actual path separately from
+            # the human-readable display text.
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                str(scope),
+            )
+
+            # Workspace scope is permanent.
+            item.setData(
+                Qt.ItemDataRole.UserRole + 1,
+                not is_workspace,
+            )
+
+            self.scope_list.addItem(
+                item
+            )
+
+        self.remove_folder_button.setDisabled(
+            True
+        )
+
+    def _add_folder(self) -> None:
+        """
+        Ask the user to explicitly select a directory.
+
+        Selecting the directory constitutes the user's
+        permission to add it to the current read scopes.
+        """
+
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Allow JARVIS to Read Folder",
+        )
+
+        # User cancelled the dialog.
+        if not selected:
+            return
+
+        path = Path(
+            selected
+        )
+
+        try:
+            self.jarvis.add_filesystem_read_scope(
+                path
+            )
+
+        except (
+            FileNotFoundError,
+            NotADirectoryError,
+            ValueError,
+        ) as exc:
+            QMessageBox.warning(
+                self,
+                "Could Not Add Folder",
+                str(exc),
+            )
+
+            return
+
+        self._refresh_filesystem_scopes()
+
+        QMessageBox.information(
+            self,
+            "Folder Access Granted",
+            (
+                "JARVIS may now read files inside:\n\n"
+                f"{path}\n\n"
+                "Write and delete permissions were NOT granted."
+            ),
+        )
+
+    def _remove_selected_folder(self) -> None:
+        """
+        Remove the currently selected user-granted scope.
+
+        The workspace cannot be removed.
+        """
+
+        item = self.scope_list.currentItem()
+
+        if item is None:
+            return
+
+        removable = bool(
+            item.data(
+                Qt.ItemDataRole.UserRole + 1
+            )
+        )
+
+        if not removable:
+            QMessageBox.information(
+                self,
+                "Permanent Workspace",
+                (
+                    "The JARVIS workspace is the permanent "
+                    "minimum filesystem scope and cannot "
+                    "be removed."
+                ),
+            )
+
+            return
+
+        raw_path = item.data(
+            Qt.ItemDataRole.UserRole
+        )
+
+        if not isinstance(
+            raw_path,
+            str,
+        ):
+            return
+
+        path = Path(
+            raw_path
+        )
+
+        confirmation = QMessageBox.question(
+            self,
+            "Remove Folder Access",
+            (
+                "Remove JARVIS read access to:\n\n"
+                f"{path}?"
+            ),
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self.jarvis.remove_filesystem_read_scope(
+                path
+            )
+
+        except ValueError as exc:
+            QMessageBox.warning(
+                self,
+                "Could Not Remove Folder",
+                str(exc),
+            )
+
+            return
+
+        self._refresh_filesystem_scopes()
+
+    def _update_remove_button(
+        self,
+        current: QListWidgetItem | None,
+        previous: QListWidgetItem | None,
+    ) -> None:
+        """
+        Enable Remove only for user-added scopes.
+        """
+
+        del previous
+
+        if current is None:
+            self.remove_folder_button.setDisabled(
+                True
+            )
+
+            return
+
+        removable = bool(
+            current.data(
+                Qt.ItemDataRole.UserRole + 1
+            )
+        )
+
+        self.remove_folder_button.setEnabled(
+            removable
+        )
+
     @staticmethod
     def _build_status_label(
         decision: PermissionDecision,
     ) -> QLabel:
         """
-        Convert the security policy decision into
-        a human-readable status badge.
+        Convert one real PermissionDecision into
+        a visible status badge.
         """
 
         if decision is PermissionDecision.ALLOW:

@@ -1,11 +1,9 @@
 """
 Central visual theme for JARVIS Desktop.
 
-Keeping styling outside individual pages prevents
-the UI code from becoming filled with presentation
-details.
-
-Later this can evolve into a larger design system.
+Keeping presentation rules outside individual pages
+makes the desktop application easier to maintain and
+allows the design system to evolve independently.
 """
 
 APP_STYLESHEET = """
@@ -138,6 +136,28 @@ QLineEdit {
 
 QLineEdit:focus {
     border: 1px solid #65c8ff;
+}
+
+QListWidget#scopeList {
+    background: #0d0f13;
+    border: 1px solid #2b303b;
+    border-radius: 8px;
+    padding: 6px;
+    min-height: 120px;
+}
+
+QListWidget#scopeList::item {
+    padding: 9px;
+    border-radius: 5px;
+}
+
+QListWidget#scopeList::item:hover {
+    background: #1e242d;
+}
+
+QListWidget#scopeList::item:selected {
+    background: #253747;
+    color: #e7eaf0;
 }
 
 QScrollArea {
