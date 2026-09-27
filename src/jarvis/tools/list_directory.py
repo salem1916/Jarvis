@@ -3,26 +3,28 @@ from pathlib import Path
 from typing import ClassVar
 
 from jarvis.security.capabilities import Capability
+from jarvis.security.filesystem_scope import FilesystemScopePolicy
 from jarvis.tools.base import Tool
 
 
 class ListDirectoryTool(Tool):
     """
-    Tool for discovering which files and folders exist
-    inside the authorized JARVIS workspace.
+    List files and folders inside an approved filesystem scope.
+
+    This tool is useful when the model does not yet know the
+    filename it needs.
+
+    FilesystemScopePolicy remains the authority over which
+    locations may be inspected.
     """
 
     name = "list_directory"
 
-    # This description is shown directly to the AI.
-    #
-    # It deliberately explains WHEN the tool should be used,
-    # not only what the Python function technically does.
     description = (
-        "List real files and folders inside the authorized "
-        "JARVIS workspace. Use this when you need to discover "
-        "which files exist, when the user does not know a filename, "
-        "or before choosing a file to read."
+        "List files and folders inside a directory that JARVIS "
+        "is allowed to access. Use this to discover available "
+        "files when you do not know the filename before using "
+        "read_file."
     )
 
     required_capability = Capability.READ_FILE
@@ -33,9 +35,12 @@ class ListDirectoryTool(Tool):
             "path": {
                 "type": "string",
                 "description": (
-                    "Directory relative to the authorized workspace. "
-                    "Use '.' for the workspace root."
+                    "Directory to list. "
+                    "Use '.' for the JARVIS workspace. "
+                    "Absolute paths must be inside an approved "
+                    "filesystem scope."
                 ),
+                "default": ".",
             },
         },
         "additionalProperties": False,
@@ -43,49 +48,55 @@ class ListDirectoryTool(Tool):
 
     def __init__(
         self,
-        allowed_root: Path,
+        workspace_root: Path,
+        scope_policy: FilesystemScopePolicy | None = None,
     ) -> None:
-        self.allowed_root = allowed_root.resolve()
+        self.workspace_root = workspace_root.expanduser().resolve()
+
+        self.scope_policy = (
+            scope_policy
+            if scope_policy is not None
+            else FilesystemScopePolicy(
+                self.workspace_root
+            )
+        )
 
     def execute(
         self,
         arguments: Mapping[str, object],
     ) -> object:
-        requested_path = arguments.get(
+        """
+        Return sorted names from one approved directory.
+        """
+
+        path = arguments.get(
             "path",
             ".",
         )
 
         if not isinstance(
-            requested_path,
+            path,
             str,
         ):
             raise TypeError(
                 "'path' must be a string."
             )
 
-        target = (
-            self.allowed_root
-            / requested_path
-        ).resolve()
+        resolved_path = self.scope_policy.resolve_path(
+            path
+        )
 
-        # Security boundary:
-        #
-        # The requested directory must remain inside
-        # the configured workspace.
-        if not target.is_relative_to(
-            self.allowed_root
-        ):
-            raise ValueError(
-                "Path is outside the allowed directory."
+        if not resolved_path.exists():
+            raise NotADirectoryError(
+                resolved_path
             )
 
-        if not target.is_dir():
+        if not resolved_path.is_dir():
             raise NotADirectoryError(
-                str(target)
+                resolved_path
             )
 
         return sorted(
-            item.name
-            for item in target.iterdir()
+            child.name
+            for child in resolved_path.iterdir()
         )

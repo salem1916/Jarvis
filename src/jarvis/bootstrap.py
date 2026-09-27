@@ -3,10 +3,13 @@ from jarvis.core.config import JarvisSettings
 from jarvis.models.base import ModelProvider
 from jarvis.models.ollama import OllamaProvider
 from jarvis.security.capabilities import Capability
+from jarvis.security.filesystem_scope import FilesystemScopePolicy
+from jarvis.security.filesystem_scope_store import FilesystemScopeStore
 from jarvis.security.policy import PermissionPolicy
 from jarvis.tools.calculator import CalculatorTool
 from jarvis.tools.executor import ToolExecutor
 from jarvis.tools.list_directory import ListDirectoryTool
+from jarvis.tools.list_filesystem_scopes import ListFilesystemScopesTool
 from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.service import ToolService
@@ -17,10 +20,7 @@ def build_model_provider(
     settings: JarvisSettings,
 ) -> ModelProvider:
     """
-    Build the configured AI model backend.
-
-    The rest of JARVIS does not need to know
-    which concrete provider is being used.
+    Build the configured model backend.
     """
 
     if settings.model_provider == "ollama":
@@ -30,7 +30,7 @@ def build_model_provider(
         )
 
     raise ValueError(
-        f"Unsupported model provider: "
+        "Unsupported model provider: "
         f"{settings.model_provider}"
     )
 
@@ -39,28 +39,14 @@ def build_application(
     settings: JarvisSettings,
 ) -> JarvisApplication:
     """
-    Assemble the JARVIS application.
-
-    This is our composition root:
-
-    configuration
-        ↓
-    permissions
-        ↓
-    tools
-        ↓
-    services
-        ↓
-    model
-        ↓
-    JarvisApplication
+    Assemble the complete JARVIS runtime.
     """
 
+    # =================================================
+    # CAPABILITY POLICY
+    # =================================================
+
     allowed_capabilities: set[Capability] = {
-        # Calculator is a pure local computation.
-        #
-        # It has no filesystem/network/application
-        # side effects, so we allow it by default.
         Capability.CALCULATE,
     }
 
@@ -74,21 +60,54 @@ def build_application(
             Capability.READ_SYSTEM_INFO
         )
 
-    policy = PermissionPolicy(
+    permission_policy = PermissionPolicy(
         allowed=allowed_capabilities,
     )
+
+    # =================================================
+    # PERSISTED FILESYSTEM SCOPES
+    # =================================================
+
+    filesystem_scope_store: FilesystemScopeStore | None = None
+
+    persisted_roots = ()
+
+    if settings.persist_filesystem_scopes:
+        filesystem_scope_store = FilesystemScopeStore(
+            settings.state_dir
+            / "filesystem_scopes.json"
+        )
+
+        persisted_roots = filesystem_scope_store.load()
+
+    filesystem_scope_policy = FilesystemScopePolicy(
+        settings.workspace_dir,
+        allowed_roots=persisted_roots,
+    )
+
+    # =================================================
+    # TOOL REGISTRY
+    # =================================================
 
     registry = ToolRegistry()
 
     registry.register(
+        ListFilesystemScopesTool(
+            filesystem_scope_policy
+        )
+    )
+
+    registry.register(
         ReadFileTool(
-            settings.workspace_dir
+            settings.workspace_dir,
+            scope_policy=filesystem_scope_policy,
         )
     )
 
     registry.register(
         ListDirectoryTool(
-            settings.workspace_dir
+            settings.workspace_dir,
+            scope_policy=filesystem_scope_policy,
         )
     )
 
@@ -100,8 +119,12 @@ def build_application(
         CalculatorTool()
     )
 
+    # =================================================
+    # SECURE EXECUTION
+    # =================================================
+
     executor = ToolExecutor(
-        policy
+        permission_policy
     )
 
     tool_service = ToolService(
@@ -109,11 +132,21 @@ def build_application(
         executor,
     )
 
+    # =================================================
+    # MODEL
+    # =================================================
+
     model_provider = build_model_provider(
         settings
     )
 
+    # =================================================
+    # APPLICATION
+    # =================================================
+
     return JarvisApplication(
         tool_service=tool_service,
         model_provider=model_provider,
+        filesystem_scope_policy=filesystem_scope_policy,
+        filesystem_scope_store=filesystem_scope_store,
     )
