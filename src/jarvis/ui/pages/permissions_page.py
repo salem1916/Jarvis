@@ -27,16 +27,19 @@ class PermissionsPage(QWidget):
     """
     JARVIS permissions dashboard.
 
-    This page displays and modifies REAL application
-    permission state.
+    This page reads and modifies the REAL JARVIS security
+    policy rather than maintaining a separate UI-only copy.
 
-    The UI does not keep an independent fake copy.
+    Security is enforced by multiple independent layers:
 
-    Security remains enforced by:
-
-        PermissionPolicy
-            +
+        PermissionMode / PermissionPolicy
+                +
         FilesystemScopePolicy
+                +
+        Tool-specific validation
+
+    Therefore "Always allow" never means unrestricted access
+    to the entire computer.
     """
 
     def __init__(
@@ -50,7 +53,9 @@ class PermissionsPage(QWidget):
         self._build_interface()
         self._refresh_filesystem_scopes()
 
-    def _build_interface(self) -> None:
+    def _build_interface(
+        self,
+    ) -> None:
         """
         Build the complete permissions dashboard.
         """
@@ -71,7 +76,7 @@ class PermissionsPage(QWidget):
         )
 
         # =================================================
-        # PAGE HEADER
+        # HEADER
         # =================================================
 
         title = QLabel(
@@ -88,8 +93,8 @@ class PermissionsPage(QWidget):
 
         description = QLabel(
             "Control what JARVIS may access and which actions "
-            "require your approval. Permission decisions are "
-            "enforced by the JARVIS security layer."
+            "require your approval. Security decisions are "
+            "enforced by the JARVIS core."
         )
 
         description.setWordWrap(
@@ -117,7 +122,7 @@ class PermissionsPage(QWidget):
         )
 
         # =================================================
-        # SCROLLABLE PAGE CONTENT
+        # SCROLLABLE CONTENT
         # =================================================
 
         scroll = QScrollArea()
@@ -151,55 +156,141 @@ class PermissionsPage(QWidget):
         # FILESYSTEM SCOPES
         # =================================================
 
-        scope_section = QWidget()
+        content_layout.addWidget(
+            self._build_filesystem_scope_section()
+        )
 
-        scope_section.setObjectName(
+        # =================================================
+        # FILESYSTEM CAPABILITIES
+        # =================================================
+
+        content_layout.addWidget(
+            self._build_filesystem_capability_section()
+        )
+
+        # =================================================
+        # APPLICATION / SYSTEM CAPABILITIES
+        # =================================================
+
+        content_layout.addWidget(
+            self._build_system_capability_section()
+        )
+
+        # =================================================
+        # EXTERNAL CAPABILITIES
+        # =================================================
+
+        content_layout.addWidget(
+            self._build_static_permission_section(
+                "Browser & External Actions",
+                [
+                    (
+                        "Use browser",
+                        Capability.USE_BROWSER,
+                    ),
+                    (
+                        "Install software",
+                        Capability.INSTALL_SOFTWARE,
+                    ),
+                    (
+                        "Send email",
+                        Capability.SEND_EMAIL,
+                    ),
+                    (
+                        "Deploy applications",
+                        Capability.DEPLOY_APPLICATION,
+                    ),
+                ],
+            )
+        )
+
+        # =================================================
+        # LOCAL UTILITIES
+        # =================================================
+
+        content_layout.addWidget(
+            self._build_static_permission_section(
+                "Local Computation",
+                [
+                    (
+                        "Calculator",
+                        Capability.CALCULATE,
+                    ),
+                ],
+            )
+        )
+
+        content_layout.addStretch()
+
+        scroll.setWidget(
+            content
+        )
+
+        root_layout.addWidget(
+            scroll,
+            stretch=1,
+        )
+
+    # =====================================================
+    # FILESYSTEM SCOPES
+    # =====================================================
+
+    def _build_filesystem_scope_section(
+        self,
+    ) -> QWidget:
+        """
+        Build approved filesystem-folder management.
+        """
+
+        section = QWidget()
+
+        section.setObjectName(
             "permissionSection"
         )
 
-        scope_layout = QVBoxLayout(
-            scope_section
+        layout = QVBoxLayout(
+            section
         )
 
-        scope_layout.setContentsMargins(
+        layout.setContentsMargins(
             18,
             18,
             18,
             18,
         )
 
-        scope_layout.setSpacing(
+        layout.setSpacing(
             10
         )
 
-        scope_title = QLabel(
+        heading = QLabel(
             "Filesystem Scopes"
         )
 
-        scope_title.setObjectName(
+        heading.setObjectName(
             "sectionHeading"
         )
 
-        scope_layout.addWidget(
-            scope_title
+        layout.addWidget(
+            heading
         )
 
-        scope_description = QLabel(
+        explanation = QLabel(
             "JARVIS may access only the folders listed below. "
-            "A capability such as Write Files or Delete Files "
-            "does not give access outside these approved scopes."
+            "Write and delete permissions do not grant access "
+            "outside these approved scopes."
         )
 
-        scope_description.setWordWrap(
+        explanation.setWordWrap(
             True
         )
 
-        scope_description.setObjectName(
+        explanation.setObjectName(
             "mutedText"
         )
 
-        scope_layout.addWidget(
-            scope_description
+        layout.addWidget(
+            explanation
         )
 
         persistence_notice = QLabel(
@@ -215,13 +306,9 @@ class PermissionsPage(QWidget):
             "infoBox"
         )
 
-        scope_layout.addWidget(
+        layout.addWidget(
             persistence_notice
         )
-
-        # -------------------------------------------------
-        # Approved folder list
-        # -------------------------------------------------
 
         self.scope_list = QListWidget()
 
@@ -233,13 +320,9 @@ class PermissionsPage(QWidget):
             self._update_remove_button
         )
 
-        scope_layout.addWidget(
+        layout.addWidget(
             self.scope_list
         )
-
-        # -------------------------------------------------
-        # Folder controls
-        # -------------------------------------------------
 
         button_row = QHBoxLayout()
 
@@ -273,116 +356,25 @@ class PermissionsPage(QWidget):
 
         button_row.addStretch()
 
-        scope_layout.addLayout(
+        layout.addLayout(
             button_row
         )
 
-        content_layout.addWidget(
-            scope_section
-        )
+        return section
 
-        # =================================================
-        # FILESYSTEM CAPABILITIES
-        # =================================================
-
-        content_layout.addWidget(
-            self._build_filesystem_capability_section()
-        )
-
-        # =================================================
-        # SYSTEM CAPABILITIES
-        # =================================================
-
-        content_layout.addWidget(
-            self._build_static_permission_section(
-                "System & Applications",
-                [
-                    (
-                        "Read system information",
-                        Capability.READ_SYSTEM_INFO,
-                    ),
-                    (
-                        "Open applications",
-                        Capability.OPEN_APPLICATION,
-                    ),
-                    (
-                        "Control applications",
-                        Capability.CONTROL_APPLICATION,
-                    ),
-                    (
-                        "Run commands",
-                        Capability.RUN_COMMAND,
-                    ),
-                ],
-            )
-        )
-
-        # =================================================
-        # NETWORK / EXTERNAL ACTIONS
-        # =================================================
-
-        content_layout.addWidget(
-            self._build_static_permission_section(
-                "Browser & External Actions",
-                [
-                    (
-                        "Use browser",
-                        Capability.USE_BROWSER,
-                    ),
-                    (
-                        "Install software",
-                        Capability.INSTALL_SOFTWARE,
-                    ),
-                    (
-                        "Send email",
-                        Capability.SEND_EMAIL,
-                    ),
-                    (
-                        "Deploy applications",
-                        Capability.DEPLOY_APPLICATION,
-                    ),
-                ],
-            )
-        )
-
-        # =================================================
-        # SAFE LOCAL COMPUTATION
-        # =================================================
-
-        content_layout.addWidget(
-            self._build_static_permission_section(
-                "Local Computation",
-                [
-                    (
-                        "Calculator",
-                        Capability.CALCULATE,
-                    ),
-                ],
-            )
-        )
-
-        content_layout.addStretch()
-
-        scroll.setWidget(
-            content
-        )
-
-        root_layout.addWidget(
-            scroll,
-            stretch=1,
-        )
+    # =====================================================
+    # FILESYSTEM CAPABILITIES
+    # =====================================================
 
     def _build_filesystem_capability_section(
         self,
     ) -> QWidget:
         """
-        Build the filesystem capability section.
+        Build filesystem permissions.
 
-        READ_FILE is currently configured elsewhere and shown
-        as a read-only status.
+        READ_FILE remains read-only in the UI for now.
 
-        WRITE_FILE and DELETE_FILE support user-selectable
-        permission modes.
+        WRITE_FILE and DELETE_FILE use configurable modes.
         """
 
         section = QWidget()
@@ -419,8 +411,8 @@ class PermissionsPage(QWidget):
         )
 
         explanation = QLabel(
-            "Automatic write/delete access still applies only "
-            "inside the approved filesystem scopes above."
+            "Automatic write or delete access still applies "
+            "only inside approved filesystem scopes."
         )
 
         explanation.setWordWrap(
@@ -443,45 +435,41 @@ class PermissionsPage(QWidget):
         )
 
         # -------------------------------------------------
-        # READ FILE
+        # READ
         # -------------------------------------------------
 
-        read_label = QLabel(
-            "Read files"
-        )
-
-        read_status = self._build_status_label(
-            self.jarvis.permission_decision(
-                Capability.READ_FILE
-            )
-        )
-
         grid.addWidget(
-            read_label,
+            QLabel(
+                "Read files"
+            ),
             0,
             0,
         )
 
         grid.addWidget(
-            read_status,
+            self._build_status_label(
+                self.jarvis.permission_decision(
+                    Capability.READ_FILE
+                )
+            ),
             0,
             1,
         )
 
         # -------------------------------------------------
-        # WRITE FILE
+        # WRITE
         # -------------------------------------------------
 
-        write_label = QLabel(
-            "Write files"
-        )
-
-        self.write_mode_combo = self._build_permission_mode_combo(
-            Capability.WRITE_FILE
+        self.write_mode_combo = (
+            self._build_permission_mode_combo(
+                Capability.WRITE_FILE
+            )
         )
 
         grid.addWidget(
-            write_label,
+            QLabel(
+                "Write files"
+            ),
             1,
             0,
         )
@@ -493,19 +481,19 @@ class PermissionsPage(QWidget):
         )
 
         # -------------------------------------------------
-        # DELETE FILE
+        # DELETE
         # -------------------------------------------------
 
-        delete_label = QLabel(
-            "Delete files"
-        )
-
-        self.delete_mode_combo = self._build_permission_mode_combo(
-            Capability.DELETE_FILE
+        self.delete_mode_combo = (
+            self._build_permission_mode_combo(
+                Capability.DELETE_FILE
+            )
         )
 
         grid.addWidget(
-            delete_label,
+            QLabel(
+                "Delete files"
+            ),
             2,
             0,
         )
@@ -522,15 +510,192 @@ class PermissionsPage(QWidget):
 
         return section
 
+    # =====================================================
+    # APPLICATION / SYSTEM CAPABILITIES
+    # =====================================================
+
+    def _build_system_capability_section(
+        self,
+    ) -> QWidget:
+        """
+        Build system/application permissions.
+
+        OPEN_APPLICATION is now user-configurable.
+
+        CONTROL_APPLICATION and RUN_COMMAND remain disabled
+        until their corresponding secure tools exist.
+        """
+
+        section = QWidget()
+
+        section.setObjectName(
+            "permissionSection"
+        )
+
+        layout = QVBoxLayout(
+            section
+        )
+
+        layout.setContentsMargins(
+            18,
+            18,
+            18,
+            18,
+        )
+
+        layout.setSpacing(
+            10
+        )
+
+        heading = QLabel(
+            "System & Applications"
+        )
+
+        heading.setObjectName(
+            "sectionHeading"
+        )
+
+        layout.addWidget(
+            heading
+        )
+
+        explanation = QLabel(
+            "Application launching uses the trusted installed-"
+            "application catalog. Command interpreters such as "
+            "CMD, PowerShell, WSL, and Windows Terminal remain "
+            "blocked even when Open Applications is set to "
+            "Always allow."
+        )
+
+        explanation.setWordWrap(
+            True
+        )
+
+        explanation.setObjectName(
+            "mutedText"
+        )
+
+        layout.addWidget(
+            explanation
+        )
+
+        grid = QGridLayout()
+
+        grid.setColumnStretch(
+            0,
+            1,
+        )
+
+        # -------------------------------------------------
+        # SYSTEM INFO
+        # -------------------------------------------------
+
+        grid.addWidget(
+            QLabel(
+                "Read system information"
+            ),
+            0,
+            0,
+        )
+
+        grid.addWidget(
+            self._build_status_label(
+                self.jarvis.permission_decision(
+                    Capability.READ_SYSTEM_INFO
+                )
+            ),
+            0,
+            1,
+        )
+
+        # -------------------------------------------------
+        # OPEN APPLICATION
+        # -------------------------------------------------
+
+        self.open_application_mode_combo = (
+            self._build_permission_mode_combo(
+                Capability.OPEN_APPLICATION
+            )
+        )
+
+        grid.addWidget(
+            QLabel(
+                "Open applications"
+            ),
+            1,
+            0,
+        )
+
+        grid.addWidget(
+            self.open_application_mode_combo,
+            1,
+            1,
+        )
+
+        # -------------------------------------------------
+        # CONTROL APPLICATION
+        # -------------------------------------------------
+
+        grid.addWidget(
+            QLabel(
+                "Control applications"
+            ),
+            2,
+            0,
+        )
+
+        grid.addWidget(
+            self._build_status_label(
+                self.jarvis.permission_decision(
+                    Capability.CONTROL_APPLICATION
+                )
+            ),
+            2,
+            1,
+        )
+
+        # -------------------------------------------------
+        # RUN COMMAND
+        # -------------------------------------------------
+
+        grid.addWidget(
+            QLabel(
+                "Run commands"
+            ),
+            3,
+            0,
+        )
+
+        grid.addWidget(
+            self._build_status_label(
+                self.jarvis.permission_decision(
+                    Capability.RUN_COMMAND
+                )
+            ),
+            3,
+            1,
+        )
+
+        layout.addLayout(
+            grid
+        )
+
+        return section
+
+    # =====================================================
+    # PERMISSION MODE DROPDOWNS
+    # =====================================================
+
     def _build_permission_mode_combo(
         self,
         capability: Capability,
     ) -> QComboBox:
         """
-        Build one editable permission-mode dropdown.
+        Build a user-editable capability mode dropdown.
 
-        The actual security state remains inside
-        JarvisApplication.
+        The AI model cannot call this API.
+
+        Only trusted UI code may modify permission modes.
         """
 
         combo = QComboBox()
@@ -572,8 +737,7 @@ class PermissionsPage(QWidget):
                 index
             )
 
-        # Connect AFTER setting the initial selection so
-        # opening the page does not accidentally modify policy.
+        # Connect only after initial state is selected.
         combo.currentIndexChanged.connect(
             lambda _index,
             selected_capability=capability,
@@ -592,10 +756,7 @@ class PermissionsPage(QWidget):
         combo: QComboBox,
     ) -> None:
         """
-        Apply a user-selected permission mode.
-
-        Persistent automatic access receives an additional
-        warning before being enabled.
+        Apply a capability permission change immediately.
         """
 
         raw_mode = combo.currentData()
@@ -622,7 +783,7 @@ class PermissionsPage(QWidget):
             return
 
         # -------------------------------------------------
-        # ALWAYS ALLOW WARNING
+        # ALWAYS ALLOW requires an additional warning.
         # -------------------------------------------------
 
         if new_mode is PermissionMode.ALWAYS_ALLOW:
@@ -630,29 +791,10 @@ class PermissionsPage(QWidget):
                 capability
             )
 
-            if capability is Capability.DELETE_FILE:
-                warning_text = (
-                    f"You are about to permanently configure "
-                    f'"{action_name}" for automatic execution.\n\n'
-                    "JARVIS will no longer ask before moving "
-                    "files to the Recycle Bin inside approved "
-                    "filesystem scopes.\n\n"
-                    "This setting will survive application "
-                    "restarts.\n\n"
-                    "Continue?"
-                )
-
-            else:
-                warning_text = (
-                    f"You are about to permanently configure "
-                    f'"{action_name}" for automatic execution.\n\n'
-                    "JARVIS will no longer ask before performing "
-                    "this capability inside approved filesystem "
-                    "scopes.\n\n"
-                    "This setting will survive application "
-                    "restarts.\n\n"
-                    "Continue?"
-                )
+            warning_text = self._always_allow_warning(
+                capability=capability,
+                action_name=action_name,
+            )
 
             result = QMessageBox.question(
                 self,
@@ -672,7 +814,7 @@ class PermissionsPage(QWidget):
                 return
 
         # -------------------------------------------------
-        # Apply to the REAL JARVIS security policy.
+        # Change the real security policy.
         # -------------------------------------------------
 
         self.jarvis.set_permission_mode(
@@ -688,13 +830,67 @@ class PermissionsPage(QWidget):
         )
 
     @staticmethod
+    def _always_allow_warning(
+        capability: Capability,
+        action_name: str,
+    ) -> str:
+        """
+        Produce capability-specific persistent-access warnings.
+        """
+
+        if capability is Capability.DELETE_FILE:
+            return (
+                f'You are about to set "{action_name}" to '
+                "automatic execution.\n\n"
+                "JARVIS will no longer ask before moving files "
+                "to the Recycle Bin inside approved filesystem "
+                "scopes.\n\n"
+                "This setting survives JARVIS restarts.\n\n"
+                "Continue?"
+            )
+
+        if capability is Capability.WRITE_FILE:
+            return (
+                f'You are about to set "{action_name}" to '
+                "automatic execution.\n\n"
+                "JARVIS will no longer ask before creating or "
+                "overwriting files inside approved filesystem "
+                "scopes.\n\n"
+                "This setting survives JARVIS restarts.\n\n"
+                "Continue?"
+            )
+
+        if capability is Capability.OPEN_APPLICATION:
+            return (
+                f'You are about to set "{action_name}" to '
+                "automatic execution.\n\n"
+                "JARVIS will be able to launch applications "
+                "from its trusted application catalog without "
+                "asking each time.\n\n"
+                "Command interpreters such as CMD, PowerShell, "
+                "WSL, and Windows Terminal remain blocked by "
+                "the application catalog.\n\n"
+                "This setting survives JARVIS restarts.\n\n"
+                "Continue?"
+            )
+
+        return (
+            f'You are about to set "{action_name}" to '
+            "automatic execution.\n\n"
+            "JARVIS will no longer ask before performing this "
+            "capability.\n\n"
+            "This setting survives JARVIS restarts.\n\n"
+            "Continue?"
+        )
+
+    @staticmethod
     def _set_combo_mode(
         combo: QComboBox,
         mode: PermissionMode,
     ) -> None:
         """
-        Change a combo selection without triggering its
-        permission-change callback.
+        Restore a combo selection without triggering its
+        permission callback.
         """
 
         index = combo.findData(
@@ -704,7 +900,7 @@ class PermissionsPage(QWidget):
         if index < 0:
             return
 
-        previous_state = combo.blockSignals(
+        old_signal_state = combo.blockSignals(
             True
         )
 
@@ -713,7 +909,7 @@ class PermissionsPage(QWidget):
         )
 
         combo.blockSignals(
-            previous_state
+            old_signal_state
         )
 
     @staticmethod
@@ -721,7 +917,7 @@ class PermissionsPage(QWidget):
         capability: Capability,
     ) -> str:
         """
-        Human-readable capability names.
+        Convert internal capability names to UI labels.
         """
 
         names = {
@@ -730,6 +926,9 @@ class PermissionsPage(QWidget):
 
             Capability.DELETE_FILE:
                 "Delete files",
+
+            Capability.OPEN_APPLICATION:
+                "Open applications",
         }
 
         return names.get(
@@ -742,7 +941,7 @@ class PermissionsPage(QWidget):
         mode: PermissionMode,
     ) -> str:
         """
-        Human-readable permission-mode names.
+        Convert permission mode to UI text.
         """
 
         names = {
@@ -763,18 +962,25 @@ class PermissionsPage(QWidget):
             mode
         ]
 
+    # =====================================================
+    # STATIC CAPABILITY SECTIONS
+    # =====================================================
+
     def _build_static_permission_section(
         self,
         title: str,
         permissions: list[
-            tuple[str, Capability]
+            tuple[
+                str,
+                Capability,
+            ]
         ],
     ) -> QWidget:
         """
-        Build a read-only capability section.
+        Build a read-only permission section.
 
-        More capabilities can become configurable later
-        using the same PermissionMode architecture.
+        These capabilities will become configurable when their
+        actual secure tools are implemented.
         """
 
         section = QWidget()
@@ -823,26 +1029,20 @@ class PermissionsPage(QWidget):
         ) in enumerate(
             permissions
         ):
-            name_label = QLabel(
-                label
-            )
-
-            decision = self.jarvis.permission_decision(
-                capability
-            )
-
-            status_label = self._build_status_label(
-                decision
-            )
-
             grid.addWidget(
-                name_label,
+                QLabel(
+                    label
+                ),
                 row,
                 0,
             )
 
             grid.addWidget(
-                status_label,
+                self._build_status_label(
+                    self.jarvis.permission_decision(
+                        capability
+                    )
+                ),
                 row,
                 1,
             )
@@ -861,8 +1061,7 @@ class PermissionsPage(QWidget):
         self,
     ) -> None:
         """
-        Reload approved folders from the actual
-        FilesystemScopePolicy.
+        Reload approved folders from the actual scope policy.
         """
 
         self.scope_list.clear()
@@ -918,8 +1117,7 @@ class PermissionsPage(QWidget):
         self,
     ) -> None:
         """
-        Ask the human to select a folder and explicitly
-        approve it as a filesystem scope.
+        Add one explicitly selected filesystem scope.
         """
 
         selected = QFileDialog.getExistingDirectory(
@@ -971,7 +1169,7 @@ class PermissionsPage(QWidget):
         self,
     ) -> None:
         """
-        Revoke one user-approved filesystem scope.
+        Revoke one user-added filesystem scope.
         """
 
         item = self.scope_list.currentItem()
@@ -1074,7 +1272,7 @@ class PermissionsPage(QWidget):
         )
 
     # =====================================================
-    # STATIC STATUS BADGES
+    # STATUS BADGES
     # =====================================================
 
     @staticmethod
@@ -1082,7 +1280,7 @@ class PermissionsPage(QWidget):
         decision: PermissionDecision,
     ) -> QLabel:
         """
-        Convert low-level policy state to a visible badge.
+        Convert low-level PermissionDecision into a badge.
         """
 
         if decision is PermissionDecision.ALLOW:
