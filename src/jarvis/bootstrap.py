@@ -3,6 +3,7 @@ from jarvis.core.config import JarvisSettings
 from jarvis.models.base import ModelProvider
 from jarvis.models.ollama import OllamaProvider
 from jarvis.security.capabilities import Capability
+from jarvis.security.filesystem_scope import FilesystemScopePolicy
 from jarvis.security.policy import PermissionPolicy
 from jarvis.tools.calculator import CalculatorTool
 from jarvis.tools.executor import ToolExecutor
@@ -18,9 +19,6 @@ def build_model_provider(
 ) -> ModelProvider:
     """
     Build the configured AI model backend.
-
-    The rest of JARVIS does not need to know
-    which concrete provider is being used.
     """
 
     if settings.model_provider == "ollama":
@@ -41,26 +39,17 @@ def build_application(
     """
     Assemble the JARVIS application.
 
-    This is our composition root:
-
-    configuration
-        ↓
-    permissions
-        ↓
-    tools
-        ↓
-    services
-        ↓
-    model
-        ↓
-    JarvisApplication
+    The filesystem scope policy is shared by all filesystem
+    tools so changing an approved root immediately affects
+    every filesystem operation.
     """
 
+    # -------------------------------------------------
+    # Capability permissions
+    # -------------------------------------------------
+
     allowed_capabilities: set[Capability] = {
-        # Calculator is a pure local computation.
-        #
-        # It has no filesystem/network/application
-        # side effects, so we allow it by default.
+        # Pure deterministic local computation.
         Capability.CALCULATE,
     }
 
@@ -74,21 +63,44 @@ def build_application(
             Capability.READ_SYSTEM_INFO
         )
 
-    policy = PermissionPolicy(
+    permission_policy = PermissionPolicy(
         allowed=allowed_capabilities,
     )
+
+    # -------------------------------------------------
+    # Filesystem resource scopes
+    #
+    # Initially ONLY the workspace is included.
+    #
+    # Later the user may add:
+    #
+    # Documents
+    # Downloads
+    # Desktop
+    # custom folders
+    # -------------------------------------------------
+
+    filesystem_scope_policy = FilesystemScopePolicy(
+        settings.workspace_dir
+    )
+
+    # -------------------------------------------------
+    # Tool registry
+    # -------------------------------------------------
 
     registry = ToolRegistry()
 
     registry.register(
         ReadFileTool(
-            settings.workspace_dir
+            settings.workspace_dir,
+            scope_policy=filesystem_scope_policy,
         )
     )
 
     registry.register(
         ListDirectoryTool(
-            settings.workspace_dir
+            settings.workspace_dir,
+            scope_policy=filesystem_scope_policy,
         )
     )
 
@@ -100,8 +112,12 @@ def build_application(
         CalculatorTool()
     )
 
+    # -------------------------------------------------
+    # Secure execution layer
+    # -------------------------------------------------
+
     executor = ToolExecutor(
-        policy
+        permission_policy
     )
 
     tool_service = ToolService(
@@ -109,11 +125,20 @@ def build_application(
         executor,
     )
 
+    # -------------------------------------------------
+    # Model backend
+    # -------------------------------------------------
+
     model_provider = build_model_provider(
         settings
     )
 
+    # -------------------------------------------------
+    # Application facade
+    # -------------------------------------------------
+
     return JarvisApplication(
         tool_service=tool_service,
         model_provider=model_provider,
+        filesystem_scope_policy=filesystem_scope_policy,
     )

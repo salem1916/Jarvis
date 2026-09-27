@@ -3,26 +3,28 @@ from pathlib import Path
 from typing import ClassVar
 
 from jarvis.security.capabilities import Capability
+from jarvis.security.filesystem_scope import FilesystemScopePolicy
 from jarvis.tools.base import Tool
 
 
 class ReadFileTool(Tool):
     """
-    Tool for reading the real contents of a UTF-8 text
-    file inside the authorized JARVIS workspace.
+    Read a UTF-8 text file from an approved filesystem scope.
+
+    The model never receives unrestricted filesystem access.
+
+    Every requested path first passes through
+    FilesystemScopePolicy.
     """
 
     name = "read_file"
 
-    # This description is shown to the AI.
-    #
-    # The model should use this after it knows which
-    # specific file needs to be inspected.
     description = (
-        "Read the real contents of a UTF-8 text file inside "
-        "the authorized JARVIS workspace. Use this when the "
-        "user asks what a known file contains. If the filename "
-        "is not known yet, use list_directory first."
+        "Read the contents of a text file from a filesystem "
+        "location that JARVIS is allowed to access. "
+        "Use this when you know the filename. "
+        "If you do not know which files exist, use "
+        "list_directory first."
     )
 
     required_capability = Capability.READ_FILE
@@ -33,8 +35,10 @@ class ReadFileTool(Tool):
             "path": {
                 "type": "string",
                 "description": (
-                    "Path to the file relative to the "
-                    "authorized workspace."
+                    "Path of the text file to read. "
+                    "Relative paths refer to the JARVIS workspace. "
+                    "Absolute paths must be inside an approved "
+                    "filesystem scope."
                 ),
             },
         },
@@ -46,42 +50,58 @@ class ReadFileTool(Tool):
 
     def __init__(
         self,
-        allowed_root: Path,
+        workspace_root: Path,
+        scope_policy: FilesystemScopePolicy | None = None,
     ) -> None:
-        self.allowed_root = allowed_root.resolve()
+        self.workspace_root = workspace_root.expanduser().resolve()
+
+        # Existing tests/tools can still construct ReadFileTool
+        # with only a workspace root.
+        #
+        # In the real application bootstrap passes one shared
+        # scope policy to all filesystem tools.
+        self.scope_policy = (
+            scope_policy
+            if scope_policy is not None
+            else FilesystemScopePolicy(
+                self.workspace_root
+            )
+        )
 
     def execute(
         self,
         arguments: Mapping[str, object],
     ) -> object:
-        requested_path = arguments.get(
+        """
+        Read one approved text file.
+        """
+
+        path = arguments.get(
             "path"
         )
 
         if not isinstance(
-            requested_path,
+            path,
             str,
         ):
             raise TypeError(
                 "'path' must be a string."
             )
 
-        target = (
-            self.allowed_root
-            / requested_path
-        ).resolve()
+        resolved_path = self.scope_policy.resolve_path(
+            path
+        )
 
-        # Security boundary:
-        #
-        # "../" and similar path traversal attempts
-        # cannot escape the authorized workspace.
-        if not target.is_relative_to(
-            self.allowed_root
-        ):
-            raise ValueError(
-                "Path is outside the allowed directory."
+        if not resolved_path.exists():
+            raise FileNotFoundError(
+                resolved_path
             )
 
-        return target.read_text(
-            encoding="utf-8",
+        if not resolved_path.is_file():
+            raise FileNotFoundError(
+                resolved_path
+            )
+
+        return resolved_path.read_text(
+            encoding="utf-8"
         )

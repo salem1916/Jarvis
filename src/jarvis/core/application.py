@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from jarvis.core.agent_service import AgentService
 from jarvis.core.conversation import Conversation
 from jarvis.core.tool_request import ToolRequest
@@ -7,9 +9,8 @@ from jarvis.models.base import (
     ModelResponse,
 )
 from jarvis.security.capabilities import Capability
-from jarvis.security.policy import (
-    PermissionDecision,
-)
+from jarvis.security.filesystem_scope import FilesystemScopePolicy
+from jarvis.security.policy import PermissionDecision
 from jarvis.tools.service import ToolService
 
 
@@ -23,29 +24,26 @@ class JarvisApplication:
     - desktop UI
     - future mobile/dashboard interfaces
 
-    communicate with this class instead of directly
-    controlling models, tools, or security internals.
+    communicate with this class rather than directly
+    controlling security, models, or tools.
     """
 
     def __init__(
         self,
         tool_service: ToolService,
         model_provider: ModelProvider,
+        filesystem_scope_policy: FilesystemScopePolicy | None = None,
     ) -> None:
         self.tool_service = tool_service
         self.model_provider = model_provider
+
+        self.filesystem_scope_policy = filesystem_scope_policy
 
         self.agent_service = AgentService(
             model_provider=model_provider,
             tool_service=tool_service,
         )
 
-        # Current active conversation.
-        #
-        # This is in-memory for now.
-        #
-        # Later conversations will receive IDs and
-        # become persistent in PostgreSQL.
         self.conversation = Conversation()
 
     def execute_tool(
@@ -68,9 +66,6 @@ class JarvisApplication:
     ) -> ModelResponse:
         """
         Perform a simple stateless model request.
-
-        This is useful for internal operations that
-        do not require tools or conversation history.
         """
 
         request = ModelRequest(
@@ -89,14 +84,6 @@ class JarvisApplication:
     ) -> str:
         """
         Main conversational JARVIS path.
-
-        This uses:
-
-        - conversation history
-        - AI reasoning
-        - tool calling
-        - permissions
-        - multi-step execution
         """
 
         return self.agent_service.run(
@@ -107,17 +94,14 @@ class JarvisApplication:
 
     def new_conversation(self) -> None:
         """
-        Clear the current in-memory conversation.
+        Start a fresh in-memory conversation.
         """
 
         self.conversation.clear()
 
     def conversation_message_count(self) -> int:
         """
-        Return the number of internal messages in
-        the current conversation.
-
-        Tool messages are included.
+        Return the current internal conversation length.
         """
 
         return len(
@@ -129,16 +113,71 @@ class JarvisApplication:
         capability: Capability,
     ) -> PermissionDecision:
         """
-        Query JARVIS's real security policy.
-
-        The desktop UI uses this method to display
-        permission state without reaching directly
-        into ToolExecutor internals.
-
-        This keeps the UI dependent on the application
-        facade rather than security implementation details.
+        Query the real security policy.
         """
 
         return self.tool_service.executor.policy.evaluate(
             capability
         )
+
+    def filesystem_read_scopes(
+        self,
+    ) -> tuple[Path, ...]:
+        """
+        Return every directory JARVIS may currently read.
+        """
+
+        policy = self._require_filesystem_scope_policy()
+
+        return policy.allowed_roots
+
+    def add_filesystem_read_scope(
+        self,
+        path: Path,
+    ) -> None:
+        """
+        Grant read access to one additional directory.
+
+        This changes only filesystem scope.
+
+        It does NOT grant WRITE_FILE or DELETE_FILE.
+        """
+
+        policy = self._require_filesystem_scope_policy()
+
+        policy.add_root(
+            path
+        )
+
+    def remove_filesystem_read_scope(
+        self,
+        path: Path,
+    ) -> None:
+        """
+        Remove one previously granted read scope.
+
+        The permanent workspace cannot be removed.
+        """
+
+        policy = self._require_filesystem_scope_policy()
+
+        policy.remove_root(
+            path
+        )
+
+    def _require_filesystem_scope_policy(
+        self,
+    ) -> FilesystemScopePolicy:
+        """
+        Return the configured filesystem scope policy.
+
+        A missing policy indicates an incorrectly assembled
+        application rather than a user permission problem.
+        """
+
+        if self.filesystem_scope_policy is None:
+            raise RuntimeError(
+                "Filesystem scope policy is not configured."
+            )
+
+        return self.filesystem_scope_policy
