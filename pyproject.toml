@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "pyside6>=6.11.2",
     "pywin32>=312",
+    "pywinauto>=0.6.9",
     "send2trash>=2.1.0",
 ]
 

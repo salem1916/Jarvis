@@ -13,6 +13,7 @@ from jarvis.security.policy import (
 )
 from jarvis.tools.application_catalog import ApplicationCatalog
 from jarvis.tools.calculator import CalculatorTool
+from jarvis.tools.click_ui_element import ClickUiElementTool
 from jarvis.tools.close_window import (
     CloseWindowTool,
     Win32CloseWindowBackend,
@@ -27,6 +28,7 @@ from jarvis.tools.list_applications import ListApplicationsTool
 from jarvis.tools.list_directory import ListDirectoryTool
 from jarvis.tools.list_filesystem_scopes import ListFilesystemScopesTool
 from jarvis.tools.list_open_windows import ListOpenWindowsTool
+from jarvis.tools.list_ui_elements import ListUiElementsTool
 from jarvis.tools.open_application import OpenApplicationTool
 from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
@@ -36,6 +38,10 @@ from jarvis.tools.trash_file import TrashFileTool
 from jarvis.tools.type_text import (
     TypeTextTool,
     Win32TextInputBackend,
+)
+from jarvis.tools.ui_automation import (
+    PywinautoUiAutomationBackend,
+    UiElementCatalog,
 )
 from jarvis.tools.window_catalog import (
     Win32WindowBackend,
@@ -115,6 +121,12 @@ def build_application(
             PermissionMode.ASK,
 
         Capability.KEYBOARD_ACTION:
+            PermissionMode.ASK,
+
+        Capability.INSPECT_UI:
+            PermissionMode.ASK,
+
+        Capability.CLICK_UI:
             PermissionMode.ASK,
     }
 
@@ -197,14 +209,10 @@ def build_application(
     )
 
     # =================================================
-    # APPLICATION CATALOG
+    # TRUSTED APPLICATION / WINDOW / UI DISCOVERY
     # =================================================
 
     application_catalog = ApplicationCatalog()
-
-    # =================================================
-    # WINDOW / INPUT BACKENDS
-    # =================================================
 
     window_backend = Win32WindowBackend()
 
@@ -218,20 +226,25 @@ def build_application(
 
     keyboard_action_backend = Win32KeyboardActionBackend()
 
+    ui_automation_backend = PywinautoUiAutomationBackend()
+
+    ui_element_catalog = UiElementCatalog(
+        ui_automation_backend
+    )
+
     # =================================================
     # TOOL REGISTRY
     # =================================================
 
     registry = ToolRegistry()
 
-    # Filesystem discovery
+    # Filesystem
     registry.register(
         ListFilesystemScopesTool(
             filesystem_scope_policy
         )
     )
 
-    # Filesystem operations
     registry.register(
         ReadFileTool(
             settings.workspace_dir,
@@ -260,7 +273,7 @@ def build_application(
         )
     )
 
-    # Installed application discovery / launch
+    # Applications
     registry.register(
         ListApplicationsTool(
             application_catalog
@@ -273,7 +286,7 @@ def build_application(
         )
     )
 
-    # Open-window discovery / manipulation
+    # Windows
     registry.register(
         ListOpenWindowsTool(
             window_catalog
@@ -293,7 +306,7 @@ def build_application(
         )
     )
 
-    # Literal typing
+    # Input
     registry.register(
         TypeTextTool(
             catalog=window_catalog,
@@ -301,11 +314,25 @@ def build_application(
         )
     )
 
-    # Trusted keyboard actions / shortcuts
     registry.register(
         KeyboardActionTool(
             catalog=window_catalog,
             keyboard_backend=keyboard_action_backend,
+        )
+    )
+
+    # UI Automation
+    registry.register(
+        ListUiElementsTool(
+            window_catalog=window_catalog,
+            ui_catalog=ui_element_catalog,
+        )
+    )
+
+    registry.register(
+        ClickUiElementTool(
+            window_catalog=window_catalog,
+            ui_catalog=ui_element_catalog,
         )
     )
 
@@ -319,7 +346,7 @@ def build_application(
     )
 
     # =================================================
-    # SECURE TOOL EXECUTION
+    # SECURE EXECUTION
     # =================================================
 
     executor = ToolExecutor(

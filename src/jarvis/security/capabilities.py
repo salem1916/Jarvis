@@ -5,9 +5,10 @@ class Capability(StrEnum):
     """
     Security capabilities understood by JARVIS.
 
-    Each capability describes a category of action.
+    Each capability represents one category of authority.
 
-    PermissionPolicy independently decides whether it is:
+    PermissionPolicy independently determines whether each
+    capability is:
 
         ALLOW
         DENY
@@ -28,15 +29,19 @@ class Capability(StrEnum):
 
     CLOSE_APPLICATION = "CLOSE_APPLICATION"
 
-    # Literal text insertion only.
     TYPE_TEXT = "TYPE_TEXT"
 
-    # Trusted named keyboard actions such as Ctrl+S,
-    # Ctrl+C, Enter, Escape, etc.
-    #
-    # This is deliberately separate from TYPE_TEXT because
-    # shortcuts may trigger application behavior.
     KEYBOARD_ACTION = "KEYBOARD_ACTION"
+
+    # Inspect named controls inside a visible application
+    # window using Windows UI Automation.
+    INSPECT_UI = "INSPECT_UI"
+
+    # Click one resolved named UI element.
+    #
+    # This deliberately does NOT grant arbitrary mouse
+    # coordinates.
+    CLICK_UI = "CLICK_UI"
 
     RUN_COMMAND = "RUN_COMMAND"
 
