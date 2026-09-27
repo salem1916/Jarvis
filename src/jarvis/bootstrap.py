@@ -13,6 +13,10 @@ from jarvis.security.policy import (
 )
 from jarvis.tools.application_catalog import ApplicationCatalog
 from jarvis.tools.calculator import CalculatorTool
+from jarvis.tools.close_window import (
+    CloseWindowTool,
+    Win32CloseWindowBackend,
+)
 from jarvis.tools.control_window import ControlWindowTool
 from jarvis.tools.executor import ToolExecutor
 from jarvis.tools.list_applications import ListApplicationsTool
@@ -37,9 +41,6 @@ def build_model_provider(
 ) -> ModelProvider:
     """
     Build the configured AI model backend.
-
-    JARVIS talks to the abstract ModelProvider interface,
-    allowing Ollama or other providers to be swapped later.
     """
 
     if settings.model_provider == "ollama":
@@ -59,32 +60,10 @@ def build_application(
 ) -> JarvisApplication:
     """
     Assemble the complete JARVIS runtime.
-
-    This is JARVIS's composition root.
-
-    It connects:
-
-        configuration
-            ↓
-        permissions
-            ↓
-        filesystem/application/window policies
-            ↓
-        tools
-            ↓
-        secure tool execution
-            ↓
-        AI model
-            ↓
-        JarvisApplication
     """
 
     # =================================================
     # AUTOMATIC CAPABILITIES
-    # =================================================
-    #
-    # These may execute without confirmation when enabled
-    # in JARVIS configuration.
     # =================================================
 
     allowed_capabilities: set[Capability] = {
@@ -102,29 +81,28 @@ def build_application(
         )
 
     # =================================================
-    # USER-CONFIGURABLE SIDE-EFFECT PERMISSIONS
+    # USER-CONFIGURABLE SIDE-EFFECT CAPABILITIES
     # =================================================
     #
     # Safe defaults:
     #
     # WRITE_FILE
-    #     Ask before modifying files.
+    #     Ask
     #
     # DELETE_FILE
-    #     Ask before moving files to Recycle Bin.
+    #     Ask
     #
     # OPEN_APPLICATION
-    #     Ask before launching applications.
+    #     Ask
     #
     # CONTROL_APPLICATION
-    #     Ask before changing window state.
+    #     Ask
     #
-    # The Permissions UI may later change these to:
+    # CLOSE_APPLICATION
+    #     Ask
     #
-    #     DENY
-    #     ASK
-    #     ALLOW_SESSION
-    #     ALWAYS_ALLOW
+    # Closing is deliberately separate from ordinary window
+    # manipulation because closing may affect unsaved work.
     # =================================================
 
     default_modes: dict[
@@ -141,6 +119,9 @@ def build_application(
             PermissionMode.ASK,
 
         Capability.CONTROL_APPLICATION:
+            PermissionMode.ASK,
+
+        Capability.CLOSE_APPLICATION:
             PermissionMode.ASK,
     }
 
@@ -163,11 +144,6 @@ def build_application(
 
         persisted_modes = permission_mode_store.load()
 
-    # -------------------------------------------------
-    # Start with safe defaults, then apply persisted
-    # choices for capabilities JARVIS currently supports.
-    # -------------------------------------------------
-
     permission_modes: dict[
         Capability,
         PermissionMode,
@@ -185,11 +161,6 @@ def build_application(
         Capability
     ] = set()
 
-    # -------------------------------------------------
-    # Convert human-facing PermissionMode values into the
-    # lower-level PermissionPolicy representation.
-    # -------------------------------------------------
-
     for capability, mode in permission_modes.items():
         decision = mode.to_decision()
 
@@ -206,10 +177,6 @@ def build_application(
                 capability
             )
 
-        # DENY requires no membership in either set.
-        #
-        # PermissionPolicy defaults to DENY.
-
     # =================================================
     # SECURITY POLICY
     # =================================================
@@ -221,15 +188,6 @@ def build_application(
 
     # =================================================
     # FILESYSTEM SCOPES
-    # =================================================
-    #
-    # Capability security determines:
-    #
-    #     WHAT JARVIS may do.
-    #
-    # FilesystemScopePolicy determines:
-    #
-    #     WHERE JARVIS may do it.
     # =================================================
 
     filesystem_scope_store: FilesystemScopeStore | None = None
@@ -250,32 +208,13 @@ def build_application(
     )
 
     # =================================================
-    # TRUSTED WINDOWS APPLICATION CATALOG
-    # =================================================
-    #
-    # This discovers applications from trusted Windows
-    # locations such as the Start Menu.
-    #
-    # The model never supplies executable paths.
+    # APPLICATION DISCOVERY
     # =================================================
 
     application_catalog = ApplicationCatalog()
 
     # =================================================
-    # TRUSTED WINDOWS WINDOW CATALOG
-    # =================================================
-    #
-    # Win32WindowBackend talks to the Windows APIs.
-    #
-    # WindowCatalog resolves human-friendly names such as:
-    #
-    #     "Discord"
-    #     "Visual Studio Code"
-    #     "Chrome"
-    #
-    # into actual window handles discovered by trusted code.
-    #
-    # The AI never supplies native window handles.
+    # WINDOW DISCOVERY / CONTROL
     # =================================================
 
     window_backend = Win32WindowBackend()
@@ -283,6 +222,10 @@ def build_application(
     window_catalog = WindowCatalog(
         window_backend
     )
+
+    # Closing uses a separate backend because graceful
+    # closing is intentionally a distinct security action.
+    close_window_backend = Win32CloseWindowBackend()
 
     # =================================================
     # TOOL REGISTRY
@@ -301,7 +244,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Filesystem read operations
+    # Filesystem operations
     # -------------------------------------------------
 
     registry.register(
@@ -318,10 +261,6 @@ def build_application(
         )
     )
 
-    # -------------------------------------------------
-    # Filesystem side effects
-    # -------------------------------------------------
-
     registry.register(
         WriteFileTool(
             settings.workspace_dir,
@@ -337,7 +276,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Installed application discovery
+    # Application discovery / launching
     # -------------------------------------------------
 
     registry.register(
@@ -346,10 +285,6 @@ def build_application(
         )
     )
 
-    # -------------------------------------------------
-    # Application launching
-    # -------------------------------------------------
-
     registry.register(
         OpenApplicationTool(
             application_catalog
@@ -357,10 +292,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Open-window discovery
-    #
-    # Read-only.
-    # Requires READ_SYSTEM_INFO.
+    # Window discovery
     # -------------------------------------------------
 
     registry.register(
@@ -370,22 +302,7 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # Window control
-    #
-    # First safe implementation supports only:
-    #
-    #     focus
-    #     minimize
-    #     maximize
-    #     restore
-    #
-    # It deliberately does NOT support:
-    #
-    #     close
-    #     kill
-    #     click
-    #     type
-    #     execute commands
+    # Non-destructive window control
     # -------------------------------------------------
 
     registry.register(
@@ -395,16 +312,29 @@ def build_application(
     )
 
     # -------------------------------------------------
-    # System information
+    # Graceful application closing
+    #
+    # Separate capability:
+    #
+    #     CLOSE_APPLICATION
+    #
+    # No force termination.
+    # -------------------------------------------------
+
+    registry.register(
+        CloseWindowTool(
+            catalog=window_catalog,
+            backend=close_window_backend,
+        )
+    )
+
+    # -------------------------------------------------
+    # System / deterministic utilities
     # -------------------------------------------------
 
     registry.register(
         SystemInfoTool()
     )
-
-    # -------------------------------------------------
-    # Deterministic calculator
-    # -------------------------------------------------
 
     registry.register(
         CalculatorTool()
@@ -412,21 +342,6 @@ def build_application(
 
     # =================================================
     # SECURE TOOL EXECUTION
-    # =================================================
-    #
-    # The model never calls tools directly.
-    #
-    # Model
-    #   ↓
-    # ToolRequest
-    #   ↓
-    # ToolService
-    #   ↓
-    # PermissionPolicy
-    #   ↓
-    # ToolExecutor
-    #   ↓
-    # Tool
     # =================================================
 
     executor = ToolExecutor(
@@ -439,7 +354,7 @@ def build_application(
     )
 
     # =================================================
-    # AI MODEL
+    # MODEL
     # =================================================
 
     model_provider = build_model_provider(
@@ -447,7 +362,7 @@ def build_application(
     )
 
     # =================================================
-    # FINAL APPLICATION
+    # APPLICATION
     # =================================================
 
     return JarvisApplication(

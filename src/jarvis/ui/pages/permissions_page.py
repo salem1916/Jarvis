@@ -27,12 +27,12 @@ class PermissionsPage(QWidget):
     """
     JARVIS permissions dashboard.
 
-    This page modifies the real security policy.
+    This page modifies the real JARVIS security policy.
 
     Permission modes control WHAT JARVIS may do.
 
-    Filesystem scopes and trusted catalogs independently
-    control WHERE / TO WHAT JARVIS may perform actions.
+    Other security layers independently control WHERE or TO
+    WHAT JARVIS may perform those actions.
     """
 
     def __init__(
@@ -111,7 +111,7 @@ class PermissionsPage(QWidget):
         )
 
         # =================================================
-        # SCROLL AREA
+        # SCROLLABLE CONTENT
         # =================================================
 
         scroll = QScrollArea()
@@ -466,11 +466,19 @@ class PermissionsPage(QWidget):
         self,
     ) -> QWidget:
         """
-        OPEN_APPLICATION and CONTROL_APPLICATION are now
-        configurable.
+        Application actions are separated by risk.
 
-        RUN_COMMAND remains disabled because its secure tool
-        has not been implemented yet.
+        OPEN_APPLICATION
+            launch trusted applications
+
+        CONTROL_APPLICATION
+            focus/minimize/maximize/restore
+
+        CLOSE_APPLICATION
+            request graceful application close
+
+        RUN_COMMAND
+            still disabled
         """
 
         section = QWidget()
@@ -507,12 +515,10 @@ class PermissionsPage(QWidget):
         )
 
         explanation = QLabel(
-            "JARVIS may safely discover and launch trusted "
-            "applications and control existing visible windows. "
-            "Current window control supports focus, minimize, "
-            "maximize, and restore only. Closing applications, "
-            "typing, clicking, and command execution remain "
-            "separate capabilities."
+            "JARVIS separates launching, window control, and "
+            "closing applications into independent permissions. "
+            "Closing uses a normal Windows close request and "
+            "does not force-kill processes."
         )
 
         explanation.setWordWrap(
@@ -535,7 +541,7 @@ class PermissionsPage(QWidget):
         )
 
         # -------------------------------------------------
-        # READ SYSTEM INFO
+        # SYSTEM INFO
         # -------------------------------------------------
 
         grid.addWidget(
@@ -605,6 +611,30 @@ class PermissionsPage(QWidget):
         )
 
         # -------------------------------------------------
+        # CLOSE APPLICATION
+        # -------------------------------------------------
+
+        self.close_application_mode_combo = (
+            self._build_permission_mode_combo(
+                Capability.CLOSE_APPLICATION
+            )
+        )
+
+        grid.addWidget(
+            QLabel(
+                "Close applications"
+            ),
+            3,
+            0,
+        )
+
+        grid.addWidget(
+            self.close_application_mode_combo,
+            3,
+            1,
+        )
+
+        # -------------------------------------------------
         # RUN COMMAND
         # -------------------------------------------------
 
@@ -612,7 +642,7 @@ class PermissionsPage(QWidget):
             QLabel(
                 "Run commands"
             ),
-            3,
+            4,
             0,
         )
 
@@ -622,7 +652,7 @@ class PermissionsPage(QWidget):
                     Capability.RUN_COMMAND
                 )
             ),
-            3,
+            4,
             1,
         )
 
@@ -679,7 +709,6 @@ class PermissionsPage(QWidget):
                 index
             )
 
-        # Connect only after initial state is set.
         combo.currentIndexChanged.connect(
             lambda _index,
             selected_capability=capability,
@@ -719,11 +748,6 @@ class PermissionsPage(QWidget):
 
         if new_mode is old_mode:
             return
-
-        # -------------------------------------------------
-        # Persistent automatic access deserves an explicit
-        # warning before activation.
-        # -------------------------------------------------
 
         if new_mode is PermissionMode.ALWAYS_ALLOW:
             action_name = self._capability_display_name(
@@ -807,11 +831,24 @@ class PermissionsPage(QWidget):
                 f'You are about to set "{action_name}" to '
                 "automatic execution.\n\n"
                 "JARVIS will be able to focus, minimize, "
-                "maximize, and restore visible application "
-                "windows without asking each time.\n\n"
-                "Closing applications, typing, clicking, and "
-                "command execution are NOT enabled by this "
-                "permission.\n\n"
+                "maximize, and restore visible windows without "
+                "asking each time.\n\n"
+                "Closing applications is still controlled by "
+                "a separate permission.\n\n"
+                "This setting survives JARVIS restarts.\n\n"
+                "Continue?"
+            )
+
+        if capability is Capability.CLOSE_APPLICATION:
+            return (
+                f'You are about to set "{action_name}" to '
+                "automatic execution.\n\n"
+                "JARVIS will be able to send normal Windows "
+                "close requests to visible applications without "
+                "asking each time.\n\n"
+                "Applications may still show Save or confirmation "
+                "dialogs. JARVIS does NOT force-kill processes "
+                "with this capability.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
             )
@@ -865,6 +902,9 @@ class PermissionsPage(QWidget):
 
             Capability.CONTROL_APPLICATION:
                 "Control applications",
+
+            Capability.CLOSE_APPLICATION:
+                "Close applications",
         }
 
         return names.get(
@@ -1180,7 +1220,7 @@ class PermissionsPage(QWidget):
         )
 
     # =====================================================
-    # STATIC STATUS LABEL
+    # STATIC STATUS LABELS
     # =====================================================
 
     @staticmethod
