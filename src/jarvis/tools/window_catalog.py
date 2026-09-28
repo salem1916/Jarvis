@@ -13,10 +13,7 @@ def _normalize_window_title(
     """
 
     return " ".join(
-        value
-        .strip()
-        .casefold()
-        .split()
+        value.strip().casefold().split()
     )
 
 
@@ -87,9 +84,7 @@ class Win32WindowBackend:
     def list_windows(
         self,
     ) -> tuple[WindowEntry, ...]:
-        windows: list[
-            WindowEntry
-        ] = []
+        windows: list[WindowEntry] = []
 
         def enum_callback(
             handle: int,
@@ -126,11 +121,10 @@ class Win32WindowBackend:
         return tuple(
             sorted(
                 windows,
-                key=lambda entry:
-                    (
-                        entry.title.casefold(),
-                        entry.handle,
-                    ),
+                key=lambda entry: (
+                    entry.title.casefold(),
+                    entry.handle,
+                ),
             )
         )
 
@@ -221,15 +215,15 @@ class WindowCatalog:
     """
     Trusted discovery/resolution layer for open windows.
 
-    The model provides a human-friendly title such as:
+    Normal application tools use resolve(), which requires one
+    unambiguous window.
 
-        "Discord"
-        "Visual Studio Code"
-        "Chrome"
+    Structured UI Automation may use matching_entries(), because
+    duplicate top-level Windows windows can legitimately have the
+    same human-visible title.
 
-    JARVIS resolves it against actual visible windows.
-
-    Ambiguous matches are rejected rather than guessed.
+    UI tools must perform additional deterministic resolution
+    before taking a side effect.
     """
 
     def __init__(
@@ -259,20 +253,27 @@ class WindowCatalog:
             for entry in self.entries()
         )
 
-    def resolve(
+    def matching_entries(
         self,
         requested_title: str,
-    ) -> WindowEntry:
+    ) -> tuple[WindowEntry, ...]:
         """
-        Resolve a title safely.
+        Return all deterministic matches for a title.
 
-        Resolution:
+        Matching order:
 
-            exact title match
+            exact matches, if any
                 ↓
-            unique partial match
+            partial matches, if no exact matches exist
                 ↓
-            reject ambiguity / missing window
+            missing-window error
+
+        Unlike resolve(), this method intentionally does NOT
+        reject multiple matches.
+
+        This is useful for trusted higher-level resolvers such
+        as UI Automation, which can safely distinguish duplicate
+        title windows using actual controls inside each window.
         """
 
         normalized = _normalize_window_title(
@@ -286,11 +287,7 @@ class WindowCatalog:
 
         entries = self.entries()
 
-        # -------------------------------------------------
-        # Exact match
-        # -------------------------------------------------
-
-        exact_matches = [
+        exact_matches = tuple(
             entry
             for entry in entries
             if (
@@ -299,61 +296,58 @@ class WindowCatalog:
                 )
                 == normalized
             )
-        ]
+        )
 
-        if len(
-            exact_matches
-        ) == 1:
-            return exact_matches[0]
+        if exact_matches:
+            return exact_matches
 
-        # -------------------------------------------------
-        # Unique partial match
-        #
-        # Example:
-        #
-        #     "Discord"
-        #
-        # can resolve:
-        #
-        #     "Discord"
-        #
-        # while:
-        #
-        #     "Chrome"
-        #
-        # may be ambiguous if many Chrome windows exist.
-        # -------------------------------------------------
-
-        partial_matches = [
+        partial_matches = tuple(
             entry
             for entry in entries
             if normalized
             in _normalize_window_title(
                 entry.title
             )
-        ]
+        )
 
-        if len(
-            partial_matches
-        ) == 1:
-            return partial_matches[0]
-
-        if len(
-            partial_matches
-        ) > 1:
-            matches = ", ".join(
-                entry.title
-                for entry in partial_matches[:10]
-            )
-
-            raise ValueError(
-                "Window title is ambiguous. "
-                f"Matches: {matches}."
-            )
+        if partial_matches:
+            return partial_matches
 
         raise ValueError(
             "No open window matched "
             f"'{requested_title}'. "
             "Use list_open_windows to discover the "
             "currently available windows."
+        )
+
+    def resolve(
+        self,
+        requested_title: str,
+    ) -> WindowEntry:
+        """
+        Resolve exactly one window safely.
+
+        Ordinary window-control tools continue to require one
+        unambiguous target.
+
+        Duplicate windows are NEVER selected arbitrarily.
+        """
+
+        matches = self.matching_entries(
+            requested_title
+        )
+
+        if len(
+            matches
+        ) == 1:
+            return matches[0]
+
+        titles = ", ".join(
+            entry.title
+            for entry in matches[:10]
+        )
+
+        raise ValueError(
+            "Window title is ambiguous. "
+            f"Matches: {titles}."
         )

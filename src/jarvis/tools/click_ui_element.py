@@ -3,40 +3,44 @@ from typing import ClassVar
 
 from jarvis.security.capabilities import Capability
 from jarvis.tools.base import Tool
-from jarvis.tools.ui_automation import UiElementCatalog
-from jarvis.tools.window_catalog import WindowCatalog
+from jarvis.tools.ui_automation import (
+    UiElementCatalog,
+    UiElementEntry,
+)
+from jarvis.tools.window_catalog import (
+    WindowCatalog,
+    WindowEntry,
+)
 
 
 class ClickUiElementTool(Tool):
     """
     Click one named UI Automation element.
 
-    SECURITY MODEL
+    The model never supplies:
 
-    The AI supplies:
+        raw coordinates
+        native window handles
+        UI Automation locators
 
-        window name
-        visible element name
-        optional control type
+    Duplicate title windows are resolved using the requested
+    real UI control.
 
-    It does NOT supply:
-
-        X coordinate
-        Y coordinate
-        native window handle
-        native UI Automation locator
-
-    JARVIS resolves all of those through trusted code.
+    Side effects are allowed only when exactly one deterministic
+    window/control pair remains.
     """
 
     name = "click_ui_element"
 
     description = (
-        "Click one named visible UI control inside a specific "
-        "open Windows application window. JARVIS resolves the "
-        "actual UI Automation element; the model cannot provide "
-        "screen coordinates. Use list_ui_elements first when "
-        "the exact control name or type is unknown."
+        "Click one named visible UI control inside an open Windows "
+        "application. JARVIS resolves the actual UI Automation "
+        "element and never accepts raw screen coordinates. If "
+        "Windows exposes duplicate windows with the same title, "
+        "JARVIS searches the requested control across them and "
+        "clicks only when exactly one deterministic target exists. "
+        "Use list_ui_elements first when the control name or type "
+        "is unknown."
     )
 
     required_capability = Capability.CLICK_UI
@@ -64,7 +68,7 @@ class ClickUiElementTool(Tool):
                 "description": (
                     "Optional UI Automation control type such "
                     "as Button, Edit, CheckBox, ListItem, or "
-                    "Hyperlink. Use it when names are ambiguous."
+                    "Hyperlink."
                 ),
             },
         },
@@ -126,43 +130,103 @@ class ClickUiElementTool(Tool):
                 "'control_type' must be a string when provided."
             )
 
-        window = self.window_catalog.resolve(
+        windows = self.window_catalog.matching_entries(
             raw_window
         )
 
         # -------------------------------------------------
         # CRITICAL SELF-PROTECTION
-        #
-        # JARVIS must not use its own automation tools to
-        # manipulate:
-        #
-        #     Permissions
-        #     approval dialogs
-        #     settings
-        #
-        # Human security decisions stay human-controlled.
         # -------------------------------------------------
 
-        if (
+        if any(
             "jarvis"
             in window.title.casefold()
+            for window in windows
         ):
             raise ValueError(
                 "JARVIS cannot automate its own application UI."
             )
 
-        element = self.ui_catalog.resolve(
-            window_handle=window.handle,
-            requested_name=raw_element,
-            requested_control_type=raw_control_type,
-        )
+        # -------------------------------------------------
+        # RESOLVE ACROSS DUPLICATE WINDOWS
+        #
+        # Example:
+        #
+        # Windows may expose:
+        #
+        #     Calculator
+        #     Calculator
+        #
+        # The model asks:
+        #
+        #     element = "7"
+        #     control_type = "Button"
+        #
+        # We search the real UI tree in every matching window.
+        #
+        # Exactly ONE window/control pair must remain before
+        # anything is clicked.
+        # -------------------------------------------------
+
+        targets: list[
+            tuple[
+                WindowEntry,
+                UiElementEntry,
+            ]
+        ] = []
+
+        for window in windows:
+            element_matches = (
+                self.ui_catalog.matching_entries(
+                    window_handle=window.handle,
+                    requested_name=raw_element,
+                    requested_control_type=raw_control_type,
+                )
+            )
+
+            for element in element_matches:
+                targets.append(
+                    (
+                        window,
+                        element,
+                    )
+                )
+
+        if not targets:
+            raise ValueError(
+                "No visible UI element matched "
+                f"'{raw_element}' in the matching "
+                f"'{raw_window}' window or windows. "
+                "Use list_ui_elements to inspect the "
+                "available controls."
+            )
+
+        if len(
+            targets
+        ) > 1:
+            descriptions = ", ".join(
+                (
+                    f"{element.name} "
+                    f"({element.control_type}) "
+                    f"in {window.title}"
+                )
+                for window, element
+                in targets[:10]
+            )
+
+            raise ValueError(
+                "UI target is ambiguous. "
+                f"Matches: {descriptions}."
+            )
+
+        window, element = targets[0]
 
         if not element.enabled:
             raise ValueError(
                 "The selected UI element is disabled."
             )
 
-        # Focus the trusted target window first.
+        # Focus only AFTER deterministic resolution succeeds.
         self.window_catalog.backend.focus(
             window.handle
         )

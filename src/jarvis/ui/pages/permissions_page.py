@@ -27,12 +27,12 @@ class PermissionsPage(QWidget):
     """
     JARVIS permissions dashboard.
 
-    This page modifies the real JARVIS security policy.
+    This page changes the REAL security policy.
 
-    Permission modes control WHAT JARVIS may do.
+    Permission modes control what categories of actions
+    JARVIS may perform.
 
-    Other security layers independently control WHERE or TO
-    WHAT JARVIS may perform those actions.
+    Tool-specific security layers still apply independently.
     """
 
     def __init__(
@@ -111,7 +111,7 @@ class PermissionsPage(QWidget):
         )
 
         # =================================================
-        # SCROLLABLE CONTENT
+        # SCROLL AREA
         # =================================================
 
         scroll = QScrollArea()
@@ -391,7 +391,6 @@ class PermissionsPage(QWidget):
             1,
         )
 
-        # READ
         grid.addWidget(
             QLabel(
                 "Read files"
@@ -410,7 +409,6 @@ class PermissionsPage(QWidget):
             1,
         )
 
-        # WRITE
         self.write_mode_combo = (
             self._build_permission_mode_combo(
                 Capability.WRITE_FILE
@@ -431,7 +429,6 @@ class PermissionsPage(QWidget):
             1,
         )
 
-        # DELETE
         self.delete_mode_combo = (
             self._build_permission_mode_combo(
                 Capability.DELETE_FILE
@@ -466,25 +463,8 @@ class PermissionsPage(QWidget):
         self,
     ) -> QWidget:
         """
-        Application capabilities are separated by risk.
-
-        OPEN_APPLICATION
-            launch trusted applications
-
-        CONTROL_APPLICATION
-            focus/minimize/maximize/restore
-
-        CLOSE_APPLICATION
-            request graceful close
-
-        TYPE_TEXT
-            type literal text
-
-        KEYBOARD_ACTION
-            perform predefined trusted shortcuts/actions
-
-        RUN_COMMAND
-            still disabled
+        Application and UI capabilities are intentionally
+        separated by risk.
         """
 
         section = QWidget()
@@ -521,11 +501,11 @@ class PermissionsPage(QWidget):
         )
 
         explanation = QLabel(
-            "Application launching, window control, closing, "
-            "literal typing, and keyboard shortcuts are separate "
-            "permissions. Keyboard actions are limited to a "
-            "trusted allowlist such as Save, Copy, Paste, Enter, "
-            "and Escape."
+            "Launching applications, controlling windows, typing, "
+            "keyboard shortcuts, inspecting UI controls, and "
+            "clicking UI controls are independent permissions. "
+            "JARVIS cannot use UI automation against its own "
+            "security interface."
         )
 
         explanation.setWordWrap(
@@ -548,7 +528,7 @@ class PermissionsPage(QWidget):
         )
 
         # -------------------------------------------------
-        # SYSTEM INFO
+        # READ SYSTEM INFORMATION
         # -------------------------------------------------
 
         grid.addWidget(
@@ -666,7 +646,7 @@ class PermissionsPage(QWidget):
         )
 
         # -------------------------------------------------
-        # KEYBOARD ACTIONS
+        # KEYBOARD ACTION
         # -------------------------------------------------
 
         self.keyboard_action_mode_combo = (
@@ -690,6 +670,54 @@ class PermissionsPage(QWidget):
         )
 
         # -------------------------------------------------
+        # INSPECT UI
+        # -------------------------------------------------
+
+        self.inspect_ui_mode_combo = (
+            self._build_permission_mode_combo(
+                Capability.INSPECT_UI
+            )
+        )
+
+        grid.addWidget(
+            QLabel(
+                "Inspect UI"
+            ),
+            6,
+            0,
+        )
+
+        grid.addWidget(
+            self.inspect_ui_mode_combo,
+            6,
+            1,
+        )
+
+        # -------------------------------------------------
+        # CLICK UI
+        # -------------------------------------------------
+
+        self.click_ui_mode_combo = (
+            self._build_permission_mode_combo(
+                Capability.CLICK_UI
+            )
+        )
+
+        grid.addWidget(
+            QLabel(
+                "Click UI elements"
+            ),
+            7,
+            0,
+        )
+
+        grid.addWidget(
+            self.click_ui_mode_combo,
+            7,
+            1,
+        )
+
+        # -------------------------------------------------
         # RUN COMMAND
         # -------------------------------------------------
 
@@ -697,7 +725,7 @@ class PermissionsPage(QWidget):
             QLabel(
                 "Run commands"
             ),
-            6,
+            8,
             0,
         )
 
@@ -707,7 +735,7 @@ class PermissionsPage(QWidget):
                     Capability.RUN_COMMAND
                 )
             ),
-            6,
+            8,
             1,
         )
 
@@ -718,7 +746,7 @@ class PermissionsPage(QWidget):
         return section
 
     # =====================================================
-    # PERMISSION MODE DROPDOWNS
+    # PERMISSION MODES
     # =====================================================
 
     def _build_permission_mode_combo(
@@ -872,11 +900,10 @@ class PermissionsPage(QWidget):
             return (
                 f'You are about to set "{action_name}" to '
                 "automatic execution.\n\n"
-                "JARVIS will be able to launch applications "
-                "from its trusted application catalog without "
-                "asking each time.\n\n"
-                "Command interpreters such as CMD, PowerShell, "
-                "WSL, and Windows Terminal remain blocked.\n\n"
+                "JARVIS will be able to launch trusted installed "
+                "applications without asking each time.\n\n"
+                "Command interpreters remain blocked by the "
+                "application catalog.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
             )
@@ -885,11 +912,10 @@ class PermissionsPage(QWidget):
             return (
                 f'You are about to set "{action_name}" to '
                 "automatic execution.\n\n"
-                "JARVIS will be able to focus, minimize, "
-                "maximize, and restore visible windows without "
-                "asking each time.\n\n"
-                "Closing, typing, and keyboard shortcuts remain "
-                "separate permissions.\n\n"
+                "JARVIS may focus, minimize, maximize, and "
+                "restore visible windows automatically.\n\n"
+                "Other interaction types remain separately "
+                "controlled.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
             )
@@ -898,10 +924,9 @@ class PermissionsPage(QWidget):
             return (
                 f'You are about to set "{action_name}" to '
                 "automatic execution.\n\n"
-                "JARVIS will be able to send normal Windows "
-                "close requests without asking each time.\n\n"
-                "Applications may still show Save or confirmation "
-                "dialogs. This does not enable force killing.\n\n"
+                "JARVIS may request normal application closing "
+                "without asking each time.\n\n"
+                "This does not permit force-killing processes.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
             )
@@ -910,12 +935,10 @@ class PermissionsPage(QWidget):
             return (
                 f'You are about to set "{action_name}" to '
                 "automatic execution.\n\n"
-                "JARVIS will be able to type literal text into "
-                "resolved visible application windows without "
-                "asking each time.\n\n"
-                "This can modify documents, source code, forms, "
+                "JARVIS may type literal text into resolved "
+                "visible windows without asking each time.\n\n"
+                "This can modify documents, forms, source code, "
                 "or messages.\n\n"
-                "Keyboard shortcuts remain separately controlled.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
             )
@@ -924,12 +947,35 @@ class PermissionsPage(QWidget):
             return (
                 f'You are about to set "{action_name}" to '
                 "automatic execution.\n\n"
-                "JARVIS will be able to perform its predefined "
-                "keyboard actions without asking each time.\n\n"
-                "Examples include Save, Copy, Paste, Select All, "
-                "Undo, Redo, Enter, Escape, and Tab.\n\n"
-                "The AI still cannot invent arbitrary key "
-                "combinations through this tool.\n\n"
+                "JARVIS may perform trusted keyboard actions "
+                "such as Save, Copy, Paste, Enter, and Escape "
+                "without asking each time.\n\n"
+                "Arbitrary key combinations remain unavailable.\n\n"
+                "This setting survives JARVIS restarts.\n\n"
+                "Continue?"
+            )
+
+        if capability is Capability.INSPECT_UI:
+            return (
+                f'You are about to set "{action_name}" to '
+                "automatic execution.\n\n"
+                "JARVIS may inspect named visible controls in "
+                "other application windows without asking.\n\n"
+                "Inspection is read-only and JARVIS cannot "
+                "inspect its own security UI.\n\n"
+                "This setting survives JARVIS restarts.\n\n"
+                "Continue?"
+            )
+
+        if capability is Capability.CLICK_UI:
+            return (
+                f'You are about to set "{action_name}" to '
+                "automatic execution.\n\n"
+                "JARVIS may click resolved UI Automation "
+                "elements in other applications without asking "
+                "each time.\n\n"
+                "The model cannot supply raw screen coordinates, "
+                "and JARVIS cannot automate its own security UI.\n\n"
                 "This setting survives JARVIS restarts.\n\n"
                 "Continue?"
             )
@@ -992,6 +1038,12 @@ class PermissionsPage(QWidget):
 
             Capability.KEYBOARD_ACTION:
                 "Keyboard actions",
+
+            Capability.INSPECT_UI:
+                "Inspect UI",
+
+            Capability.CLICK_UI:
+                "Click UI elements",
         }
 
         return names.get(
@@ -1126,15 +1178,11 @@ class PermissionsPage(QWidget):
                 scope == workspace
             )
 
-            if is_workspace:
-                display_text = (
-                    f"Workspace — {scope}"
-                )
-
-            else:
-                display_text = (
-                    f"Allowed folder — {scope}"
-                )
+            display_text = (
+                f"Workspace — {scope}"
+                if is_workspace
+                else f"Allowed folder — {scope}"
+            )
 
             item = QListWidgetItem(
                 display_text
@@ -1307,7 +1355,7 @@ class PermissionsPage(QWidget):
         )
 
     # =====================================================
-    # STATUS LABELS
+    # STATUS LABEL
     # =====================================================
 
     @staticmethod

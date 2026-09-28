@@ -10,14 +10,13 @@ def _normalize_ui_text(
     """
     Normalize human-visible UI text.
 
-    Windows controls sometimes use ampersands for keyboard
-    mnemonics, for example:
+    Windows UI controls sometimes expose mnemonic markers:
 
-        "&Save"
+        &Save
 
-    The user/model should still be able to request:
+    This should still match:
 
-        "Save"
+        Save
     """
 
     return " ".join(
@@ -38,12 +37,11 @@ def _normalize_ui_text(
 )
 class UiElementEntry:
     """
-    One UI element discovered through trusted Windows
-    UI Automation.
+    One UI element discovered through Windows UI Automation.
 
-    locator is internal trusted state.
+    locator is internal trusted JARVIS state.
 
-    It is deliberately NOT returned to the AI model.
+    It is never exposed to the AI model.
     """
 
     locator: str
@@ -54,20 +52,13 @@ class UiElementEntry:
 
 class UiAutomationBackend(Protocol):
     """
-    Platform abstraction for UI Automation.
-
-    Tests use a fake implementation.
-
-    The real desktop uses PywinautoUiAutomationBackend.
+    Platform abstraction for Windows UI Automation.
     """
 
     def list_elements(
         self,
         window_handle: int,
-    ) -> tuple[
-        UiElementEntry,
-        ...,
-    ]:
+    ) -> tuple[UiElementEntry, ...]:
         ...
 
     def click(
@@ -80,11 +71,10 @@ class UiAutomationBackend(Protocol):
 
 class PywinautoUiAutomationBackend:
     """
-    Windows UI Automation implementation backed by
-    pywinauto's UIA backend.
+    Real Windows UI Automation backend using pywinauto.
 
-    JARVIS discovers real UI controls rather than allowing
-    the AI to invent screen coordinates.
+    The model never supplies screen coordinates or internal
+    UI Automation identifiers.
     """
 
     MAX_ELEMENTS = 200
@@ -92,12 +82,9 @@ class PywinautoUiAutomationBackend:
     def list_elements(
         self,
         window_handle: int,
-    ) -> tuple[
-        UiElementEntry,
-        ...,
-    ]:
+    ) -> tuple[UiElementEntry, ...]:
         """
-        Enumerate visible named descendants of one trusted
+        Enumerate named visible descendants of one trusted
         top-level window.
         """
 
@@ -152,10 +139,6 @@ class PywinautoUiAutomationBackend:
                     else ""
                 )
 
-                # First safe version exposes named controls
-                # only. This prevents large amounts of useless
-                # unnamed implementation detail from reaching
-                # the model.
                 if not name:
                     continue
 
@@ -189,10 +172,10 @@ class PywinautoUiAutomationBackend:
                 RuntimeError,
                 OSError,
             ):
-                # UI trees can change while being inspected.
+                # UI trees can change while being enumerated.
                 #
-                # A disappearing individual control should not
-                # prevent inspection of the rest of the window.
+                # A disappearing individual element should not
+                # invalidate the entire read-only inspection.
                 continue
 
         return tuple(
@@ -205,10 +188,7 @@ class PywinautoUiAutomationBackend:
         locator: str,
     ) -> None:
         """
-        Click one element previously resolved from the current
-        trusted UI tree.
-
-        locator is generated internally by JARVIS.
+        Click one internally resolved UI element.
         """
 
         try:
@@ -253,24 +233,16 @@ class PywinautoUiAutomationBackend:
                 "The selected UI element is disabled."
             )
 
-        # click_input derives coordinates from the actual
-        # UI Automation element.
-        #
-        # The model never supplies X/Y coordinates.
         wrapper.click_input()
 
 
 class UiElementCatalog:
     """
-    Trusted resolver for named UI elements.
+    Trusted resolver for controls inside one Windows window.
 
-    Resolution order:
+    The model supplies only human-readable names.
 
-        exact name + optional type
-            ↓
-        unique partial name + optional type
-            ↓
-        reject ambiguity
+    Internal locators remain trusted state.
     """
 
     def __init__(
@@ -282,22 +254,28 @@ class UiElementCatalog:
     def entries(
         self,
         window_handle: int,
-    ) -> tuple[
-        UiElementEntry,
-        ...,
-    ]:
+    ) -> tuple[UiElementEntry, ...]:
+        """
+        Return current named UI elements for one window.
+        """
+
         return self.backend.list_elements(
             window_handle
         )
 
-    def resolve(
+    def matching_entries(
         self,
         window_handle: int,
         requested_name: str,
         requested_control_type: str | None = None,
-    ) -> UiElementEntry:
+    ) -> tuple[UiElementEntry, ...]:
         """
-        Resolve one UI element deterministically.
+        Return deterministic matching UI elements.
+
+        Exact name matches are preferred over partial matches.
+
+        Multiple matches are returned to the caller instead of
+        silently choosing one.
         """
 
         normalized_name = _normalize_ui_text(
@@ -317,7 +295,7 @@ class UiElementCatalog:
             else None
         )
 
-        candidates = [
+        candidates = tuple(
             entry
             for entry in self.entries(
                 window_handle
@@ -329,13 +307,9 @@ class UiElementCatalog:
                 )
                 == normalized_type
             )
-        ]
+        )
 
-        # -------------------------------------------------
-        # Exact match first.
-        # -------------------------------------------------
-
-        exact_matches = [
+        exact_matches = tuple(
             entry
             for entry in candidates
             if (
@@ -344,41 +318,43 @@ class UiElementCatalog:
                 )
                 == normalized_name
             )
-        ]
+        )
 
-        if len(
-            exact_matches
-        ) == 1:
-            return exact_matches[0]
+        if exact_matches:
+            return exact_matches
 
-        if len(
-            exact_matches
-        ) > 1:
-            raise ValueError(
-                "UI element name is ambiguous. "
-                "Specify the control type as well."
-            )
-
-        # -------------------------------------------------
-        # Then unique partial match.
-        # -------------------------------------------------
-
-        partial_matches = [
+        return tuple(
             entry
             for entry in candidates
             if normalized_name
             in _normalize_ui_text(
                 entry.name
             )
-        ]
+        )
+
+    def resolve(
+        self,
+        window_handle: int,
+        requested_name: str,
+        requested_control_type: str | None = None,
+    ) -> UiElementEntry:
+        """
+        Resolve exactly one UI element inside one window.
+        """
+
+        matches = self.matching_entries(
+            window_handle=window_handle,
+            requested_name=requested_name,
+            requested_control_type=requested_control_type,
+        )
 
         if len(
-            partial_matches
+            matches
         ) == 1:
-            return partial_matches[0]
+            return matches[0]
 
         if len(
-            partial_matches
+            matches
         ) > 1:
             descriptions = ", ".join(
                 (
@@ -386,7 +362,7 @@ class UiElementCatalog:
                     f"({entry.control_type})"
                 )
                 for entry
-                in partial_matches[:10]
+                in matches[:10]
             )
 
             raise ValueError(

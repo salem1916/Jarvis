@@ -65,14 +65,23 @@ class FakeWindowBackend:
 
 
 class FakeUiBackend:
+    """
+    UI elements are stored per real window handle.
+
+    This lets us test duplicate top-level window titles.
+    """
+
     def __init__(
         self,
-        elements: tuple[
-            UiElementEntry,
-            ...,
+        elements_by_window: dict[
+            int,
+            tuple[
+                UiElementEntry,
+                ...,
+            ],
         ],
     ) -> None:
-        self.elements = elements
+        self.elements_by_window = elements_by_window
 
         self.clicked: list[
             tuple[
@@ -88,9 +97,10 @@ class FakeUiBackend:
         UiElementEntry,
         ...,
     ]:
-        del window_handle
-
-        return self.elements
+        return self.elements_by_window.get(
+            window_handle,
+            (),
+        )
 
     def click(
         self,
@@ -110,21 +120,17 @@ def test_list_ui_elements_uses_inspect_capability(
 ) -> None:
     del tmp_path
 
-    windows = WindowCatalog(
-        FakeWindowBackend(
-            ()
-        )
-    )
-
-    ui = UiElementCatalog(
-        FakeUiBackend(
-            ()
-        )
-    )
-
     tool = ListUiElementsTool(
-        window_catalog=windows,
-        ui_catalog=ui,
+        window_catalog=WindowCatalog(
+            FakeWindowBackend(
+                ()
+            )
+        ),
+        ui_catalog=UiElementCatalog(
+            FakeUiBackend(
+                {}
+            )
+        ),
     )
 
     assert (
@@ -138,21 +144,17 @@ def test_click_ui_element_uses_separate_capability(
 ) -> None:
     del tmp_path
 
-    windows = WindowCatalog(
-        FakeWindowBackend(
-            ()
-        )
-    )
-
-    ui = UiElementCatalog(
-        FakeUiBackend(
-            ()
-        )
-    )
-
     tool = ClickUiElementTool(
-        window_catalog=windows,
-        ui_catalog=ui,
+        window_catalog=WindowCatalog(
+            FakeWindowBackend(
+                ()
+            )
+        ),
+        ui_catalog=UiElementCatalog(
+            FakeUiBackend(
+                {}
+            )
+        ),
     )
 
     assert (
@@ -176,14 +178,16 @@ def test_list_ui_elements_hides_internal_locator(
     )
 
     ui_backend = FakeUiBackend(
-        (
-            UiElementEntry(
-                locator="secret-internal-id",
-                name="Save",
-                control_type="Button",
-                enabled=True,
-            ),
-        )
+        {
+            5: (
+                UiElementEntry(
+                    locator="secret-internal-id",
+                    name="Save",
+                    control_type="Button",
+                    enabled=True,
+                ),
+            )
+        }
     )
 
     tool = ListUiElementsTool(
@@ -210,7 +214,140 @@ def test_list_ui_elements_hides_internal_locator(
     ]
 
 
-def test_click_ui_element_resolves_and_clicks_target(
+def test_list_ui_elements_merges_duplicate_title_windows(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+
+    window_backend = FakeWindowBackend(
+        (
+            WindowEntry(
+                handle=10,
+                title="Calculator",
+            ),
+            WindowEntry(
+                handle=20,
+                title="Calculator",
+            ),
+        )
+    )
+
+    ui_backend = FakeUiBackend(
+        {
+            10: (
+                UiElementEntry(
+                    locator="display",
+                    name="Display is 0",
+                    control_type="Text",
+                    enabled=True,
+                ),
+            ),
+            20: (
+                UiElementEntry(
+                    locator="seven",
+                    name="7",
+                    control_type="Button",
+                    enabled=True,
+                ),
+            ),
+        }
+    )
+
+    tool = ListUiElementsTool(
+        window_catalog=WindowCatalog(
+            window_backend
+        ),
+        ui_catalog=UiElementCatalog(
+            ui_backend
+        ),
+    )
+
+    result = tool.execute(
+        {
+            "window": "Calculator",
+        }
+    )
+
+    assert result == [
+        {
+            "name": "Display is 0",
+            "control_type": "Text",
+            "enabled": True,
+        },
+        {
+            "name": "7",
+            "control_type": "Button",
+            "enabled": True,
+        },
+    ]
+
+
+def test_list_ui_elements_deduplicates_duplicate_controls(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+
+    window_backend = FakeWindowBackend(
+        (
+            WindowEntry(
+                handle=10,
+                title="Calculator",
+            ),
+            WindowEntry(
+                handle=20,
+                title="Calculator",
+            ),
+        )
+    )
+
+    repeated_button = UiElementEntry(
+        locator="different-internal-locator",
+        name="7",
+        control_type="Button",
+        enabled=True,
+    )
+
+    ui_backend = FakeUiBackend(
+        {
+            10: (
+                UiElementEntry(
+                    locator="one",
+                    name="7",
+                    control_type="Button",
+                    enabled=True,
+                ),
+            ),
+            20: (
+                repeated_button,
+            ),
+        }
+    )
+
+    tool = ListUiElementsTool(
+        window_catalog=WindowCatalog(
+            window_backend
+        ),
+        ui_catalog=UiElementCatalog(
+            ui_backend
+        ),
+    )
+
+    result = tool.execute(
+        {
+            "window": "Calculator",
+        }
+    )
+
+    assert result == [
+        {
+            "name": "7",
+            "control_type": "Button",
+            "enabled": True,
+        }
+    ]
+
+
+def test_click_ui_element_resolves_single_window_target(
     tmp_path: Path,
 ) -> None:
     del tmp_path
@@ -225,20 +362,22 @@ def test_click_ui_element_resolves_and_clicks_target(
     )
 
     ui_backend = FakeUiBackend(
-        (
-            UiElementEntry(
-                locator="button-1",
-                name="Cancel",
-                control_type="Button",
-                enabled=True,
-            ),
-            UiElementEntry(
-                locator="button-2",
-                name="Save",
-                control_type="Button",
-                enabled=True,
-            ),
-        )
+        {
+            77: (
+                UiElementEntry(
+                    locator="button-1",
+                    name="Cancel",
+                    control_type="Button",
+                    enabled=True,
+                ),
+                UiElementEntry(
+                    locator="button-2",
+                    name="Save",
+                    control_type="Button",
+                    enabled=True,
+                ),
+            )
+        }
     )
 
     tool = ClickUiElementTool(
@@ -279,26 +418,169 @@ def test_click_ui_element_resolves_and_clicks_target(
     ] == "Save"
 
 
+def test_click_ui_disambiguates_duplicate_window_using_control(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+
+    window_backend = FakeWindowBackend(
+        (
+            WindowEntry(
+                handle=100,
+                title="Calculator",
+            ),
+            WindowEntry(
+                handle=200,
+                title="Calculator",
+            ),
+        )
+    )
+
+    ui_backend = FakeUiBackend(
+        {
+            100: (
+                UiElementEntry(
+                    locator="host-text",
+                    name="Calculator",
+                    control_type="Text",
+                    enabled=True,
+                ),
+            ),
+            200: (
+                UiElementEntry(
+                    locator="seven-button",
+                    name="7",
+                    control_type="Button",
+                    enabled=True,
+                ),
+            ),
+        }
+    )
+
+    tool = ClickUiElementTool(
+        window_catalog=WindowCatalog(
+            window_backend
+        ),
+        ui_catalog=UiElementCatalog(
+            ui_backend
+        ),
+    )
+
+    result = tool.execute(
+        {
+            "window": "Calculator",
+            "element": "7",
+            "control_type": "Button",
+        }
+    )
+
+    assert window_backend.focused == [
+        200,
+    ]
+
+    assert ui_backend.clicked == [
+        (
+            200,
+            "seven-button",
+        )
+    ]
+
+    assert isinstance(
+        result,
+        dict,
+    )
+
+    assert result[
+        "element"
+    ] == "7"
+
+
+def test_click_ui_refuses_real_remaining_ambiguity(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+
+    window_backend = FakeWindowBackend(
+        (
+            WindowEntry(
+                handle=100,
+                title="Calculator",
+            ),
+            WindowEntry(
+                handle=200,
+                title="Calculator",
+            ),
+        )
+    )
+
+    ui_backend = FakeUiBackend(
+        {
+            100: (
+                UiElementEntry(
+                    locator="seven-1",
+                    name="7",
+                    control_type="Button",
+                    enabled=True,
+                ),
+            ),
+            200: (
+                UiElementEntry(
+                    locator="seven-2",
+                    name="7",
+                    control_type="Button",
+                    enabled=True,
+                ),
+            ),
+        }
+    )
+
+    tool = ClickUiElementTool(
+        window_catalog=WindowCatalog(
+            window_backend
+        ),
+        ui_catalog=UiElementCatalog(
+            ui_backend
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="ambiguous",
+    ):
+        tool.execute(
+            {
+                "window": "Calculator",
+                "element": "7",
+                "control_type": "Button",
+            }
+        )
+
+    assert window_backend.focused == []
+    assert ui_backend.clicked == []
+
+
 def test_ui_catalog_rejects_ambiguous_elements(
     tmp_path: Path,
 ) -> None:
     del tmp_path
 
     ui_backend = FakeUiBackend(
-        (
-            UiElementEntry(
-                locator="1",
-                name="Open file",
-                control_type="Button",
-                enabled=True,
-            ),
-            UiElementEntry(
-                locator="2",
-                name="Open folder",
-                control_type="Button",
-                enabled=True,
-            ),
-        )
+        {
+            1: (
+                UiElementEntry(
+                    locator="1",
+                    name="Open file",
+                    control_type="Button",
+                    enabled=True,
+                ),
+                UiElementEntry(
+                    locator="2",
+                    name="Open folder",
+                    control_type="Button",
+                    enabled=True,
+                ),
+            )
+        }
     )
 
     catalog = UiElementCatalog(
@@ -330,14 +612,16 @@ def test_ui_tools_refuse_to_automate_jarvis_itself(
     )
 
     ui_backend = FakeUiBackend(
-        (
-            UiElementEntry(
-                locator="1",
-                name="Always allow",
-                control_type="Button",
-                enabled=True,
-            ),
-        )
+        {
+            999: (
+                UiElementEntry(
+                    locator="1",
+                    name="Always allow",
+                    control_type="Button",
+                    enabled=True,
+                ),
+            )
+        }
     )
 
     tool = ClickUiElementTool(
