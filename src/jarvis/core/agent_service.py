@@ -427,12 +427,13 @@ class AgentService:
                     )
 
                 messages.append(
-                    ModelMessage(
-                        role="tool",
-                        tool_name=tool_call.name,
-                        content=tool_content,
-                    )
-                )
+    ModelMessage(
+        role="tool",
+        tool_name=tool_call.name,
+        tool_call_id=tool_call.call_id,
+        content=tool_content,
+    )
+)
 
             tool_rounds_used += 1
 

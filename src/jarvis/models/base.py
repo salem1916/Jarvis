@@ -12,10 +12,16 @@ class ModelToolDefinition(BaseModel):
     into its own API-specific tool format.
     """
 
-    name: str = Field(min_length=1)
+    name: str = Field(
+        min_length=1
+    )
+
     description: str
 
-    parameters: dict[str, object] = Field(
+    parameters: dict[
+        str,
+        object,
+    ] = Field(
         default_factory=dict
     )
 
@@ -27,12 +33,36 @@ class ModelToolCall(BaseModel):
     This object does NOT execute anything.
 
     Execution still goes through JARVIS:
-    ToolService -> PermissionPolicy -> ToolExecutor.
+
+        ToolService
+            ↓
+        PermissionPolicy
+            ↓
+        ToolExecutor
+
+    call_id:
+
+        Optional provider-generated identifier for this
+        specific tool request.
+
+        OpenAI-compatible providers use this to associate
+        the later tool result with the exact assistant tool
+        call that requested it.
+
+        Providers that do not require call IDs may leave it
+        as None.
     """
 
-    name: str = Field(min_length=1)
+    call_id: str | None = None
 
-    arguments: dict[str, object] = Field(
+    name: str = Field(
+        min_length=1
+    )
+
+    arguments: dict[
+        str,
+        object,
+    ] = Field(
         default_factory=dict
     )
 
@@ -66,11 +96,22 @@ class ModelMessage(BaseModel):
     content: str = ""
 
     # For role="tool".
-    # Identifies which tool produced the result.
+    #
+    # Human-readable JARVIS tool name.
     tool_name: str | None = None
 
+    # For role="tool".
+    #
+    # Associates this result with the exact provider tool
+    # request that produced it.
+    #
+    # Optional because not every provider requires IDs.
+    tool_call_id: str | None = None
+
     # For assistant messages that request tools.
-    tool_calls: list[ModelToolCall] = Field(
+    tool_calls: list[
+        ModelToolCall
+    ] = Field(
         default_factory=list
     )
 
@@ -87,15 +128,21 @@ class ModelRequest(BaseModel):
         native tool-result history.
     """
 
-    prompt: str = Field(min_length=1)
+    prompt: str = Field(
+        min_length=1
+    )
 
     system_prompt: str | None = None
 
-    messages: list[ModelMessage] = Field(
+    messages: list[
+        ModelMessage
+    ] = Field(
         default_factory=list
     )
 
-    tools: list[ModelToolDefinition] = Field(
+    tools: list[
+        ModelToolDefinition
+    ] = Field(
         default_factory=list
     )
 
@@ -106,10 +153,14 @@ class ModelResponse(BaseModel):
     """
 
     text: str
+
     provider: str
+
     model: str
 
-    tool_calls: list[ModelToolCall] = Field(
+    tool_calls: list[
+        ModelToolCall
+    ] = Field(
         default_factory=list
     )
 
@@ -126,6 +177,8 @@ class ModelProvider(ABC):
         self,
         request: ModelRequest,
     ) -> ModelResponse:
-        """Generate one model response."""
+        """
+        Generate one model response.
+        """
 
         raise NotImplementedError

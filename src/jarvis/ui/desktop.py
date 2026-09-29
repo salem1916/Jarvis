@@ -19,7 +19,9 @@ from jarvis.core.config import (
     load_settings,
 )
 from jarvis.core.system_prompt import build_system_prompt
+from jarvis.runtime.profile import ModelRole
 from jarvis.ui.pages.chat_page import ChatPage
+from jarvis.ui.pages.models_page import ModelsPage
 from jarvis.ui.pages.permissions_page import PermissionsPage
 from jarvis.ui.pages.placeholder_page import PlaceholderPage
 from jarvis.ui.theme import APP_STYLESHEET
@@ -91,6 +93,8 @@ class JarvisWindow(QMainWindow):
         )
 
         self._build_interface()
+
+        self._refresh_runtime_sidebar()
 
     def _build_interface(self) -> None:
         """
@@ -266,12 +270,16 @@ class JarvisWindow(QMainWindow):
             model_heading
         )
 
-        model_label = QLabel(
-            self.settings.ollama_model
+        self.model_label = QLabel(
+            "Loading..."
+        )
+
+        self.model_label.setWordWrap(
+            True
         )
 
         sidebar_layout.addWidget(
-            model_label
+            self.model_label
         )
 
         provider_heading = QLabel(
@@ -286,12 +294,56 @@ class JarvisWindow(QMainWindow):
             provider_heading
         )
 
-        provider_label = QLabel(
-            self.settings.model_provider
+        self.provider_label = QLabel(
+            "Loading..."
+        )
+
+        self.provider_label.setWordWrap(
+            True
         )
 
         sidebar_layout.addWidget(
-            provider_label
+            self.provider_label
+        )
+
+        agent_heading = QLabel(
+            "AGENT"
+        )
+
+        agent_heading.setObjectName(
+            "sectionTitle"
+        )
+
+        sidebar_layout.addWidget(
+            agent_heading
+        )
+
+        self.agent_label = QLabel(
+            "Loading..."
+        )
+
+        sidebar_layout.addWidget(
+            self.agent_label
+        )
+
+        mode_heading = QLabel(
+            "MODE"
+        )
+
+        mode_heading.setObjectName(
+            "sectionTitle"
+        )
+
+        sidebar_layout.addWidget(
+            mode_heading
+        )
+
+        self.mode_label = QLabel(
+            "Loading..."
+        )
+
+        sidebar_layout.addWidget(
+            self.mode_label
         )
 
         self.message_count_label = QLabel(
@@ -350,12 +402,8 @@ class JarvisWindow(QMainWindow):
             jarvis=self.jarvis,
         )
 
-        self.models_page = PlaceholderPage(
-            title="Models",
-            description=(
-                "Model selection and the future ModelRouter "
-                "will be managed here."
-            ),
+        self.models_page = ModelsPage(
+            jarvis=self.jarvis,
         )
 
         self.settings_page = PlaceholderPage(
@@ -416,6 +464,10 @@ class JarvisWindow(QMainWindow):
             self._set_request_busy
         )
 
+        self.models_page.runtime_changed.connect(
+            self._refresh_runtime_sidebar
+        )
+
     def _add_navigation_button(
         self,
         layout: QVBoxLayout,
@@ -461,6 +513,9 @@ class JarvisWindow(QMainWindow):
         Display the requested application page.
         """
 
+        if page_id == self.MODELS_PAGE:
+            self.models_page.refresh_view()
+
         self.pages.setCurrentIndex(
             page_id
         )
@@ -484,6 +539,46 @@ class JarvisWindow(QMainWindow):
             chat_button.setChecked(
                 True
             )
+
+    def _refresh_runtime_sidebar(
+        self,
+    ) -> None:
+        """
+        Refresh sidebar runtime information from the trusted
+        JARVIS runtime rather than legacy .env defaults.
+        """
+
+        profile = self.jarvis.runtime_profile()
+
+        selection = self.jarvis.model_selection(
+            ModelRole.MAIN
+        )
+
+        if selection is None:
+            self.model_label.setText(
+                "Auto"
+            )
+
+            self.provider_label.setText(
+                "Auto"
+            )
+
+        else:
+            self.model_label.setText(
+                selection.model_id
+            )
+
+            self.provider_label.setText(
+                selection.provider_id
+            )
+
+        self.agent_label.setText(
+            profile.agent_engine.value
+        )
+
+        self.mode_label.setText(
+            profile.mode.value
+        )
 
     def _set_message_count(
         self,
