@@ -9,6 +9,18 @@ from jarvis.models.base import (
     ModelRequest,
     ModelResponse,
 )
+from jarvis.models.catalog import (
+    ModelDefinition,
+    ProviderDefinition,
+)
+from jarvis.runtime.model_manager import ModelManager
+from jarvis.runtime.profile import (
+    AgentEngineId,
+    ModelRole,
+    ModelSelection,
+    RuntimeMode,
+    RuntimeProfile,
+)
 from jarvis.security.capabilities import Capability
 from jarvis.security.filesystem_scope import FilesystemScopePolicy
 from jarvis.security.filesystem_scope_store import FilesystemScopeStore
@@ -23,6 +35,10 @@ from jarvis.tools.service import ToolService
 class JarvisApplication:
     """
     Main trusted application facade for JARVIS.
+
+    The UI and CLI should communicate with this facade instead
+    of directly manipulating model providers, permissions, or
+    trusted tools.
     """
 
     def __init__(
@@ -36,9 +52,12 @@ class JarvisApplication:
             Capability,
             PermissionMode,
         ] | None = None,
+        model_manager: ModelManager | None = None,
     ) -> None:
         self.tool_service = tool_service
+
         self.model_provider = model_provider
+        self.model_manager = model_manager
 
         self.filesystem_scope_policy = filesystem_scope_policy
         self.filesystem_scope_store = filesystem_scope_store
@@ -59,12 +78,32 @@ class JarvisApplication:
             if mode is not PermissionMode.ALLOW_SESSION
         }
 
-        self.agent_service = AgentService(
-            model_provider=model_provider,
-            tool_service=tool_service,
+        self.agent_service = self._build_agent_service(
+            model_provider
         )
 
         self.conversation = Conversation()
+
+    def _build_agent_service(
+        self,
+        model_provider: ModelProvider,
+    ) -> AgentService:
+        """
+        Build the current native agent runtime.
+
+        Later the AgentEngine abstraction will allow this path
+        to switch between Native JARVIS and Hermes while the
+        trusted ToolService remains unchanged.
+        """
+
+        return AgentService(
+            model_provider=model_provider,
+            tool_service=self.tool_service,
+        )
+
+    # =================================================
+    # TRUSTED TOOL EXECUTION
+    # =================================================
 
     def execute_tool(
         self,
@@ -80,6 +119,10 @@ class JarvisApplication:
             request,
             confirmed=confirmed,
         )
+
+    # =================================================
+    # MODEL / AGENT EXECUTION
+    # =================================================
 
     def ask(
         self,
@@ -129,6 +172,192 @@ class JarvisApplication:
         return len(
             self.conversation
         )
+
+    # =================================================
+    # MODEL MANAGEMENT
+    # =================================================
+
+    def runtime_profile(
+        self,
+    ) -> RuntimeProfile:
+        """
+        Return the current runtime profile.
+
+        The returned object is a copy and cannot silently
+        mutate JARVIS configuration.
+        """
+
+        manager = self._require_model_manager()
+
+        return manager.profile()
+
+    def model_providers(
+        self,
+    ) -> tuple[
+        ProviderDefinition,
+        ...,
+    ]:
+        """
+        Return model providers known to JARVIS.
+        """
+
+        manager = self._require_model_manager()
+
+        return manager.providers()
+
+    def available_models(
+        self,
+    ) -> tuple[
+        ModelDefinition,
+        ...,
+    ]:
+        """
+        Return models currently known to JARVIS.
+        """
+
+        manager = self._require_model_manager()
+
+        return manager.models()
+
+    def models_for_provider(
+        self,
+        provider_id: str,
+    ) -> tuple[
+        ModelDefinition,
+        ...,
+    ]:
+        """
+        Return models belonging to one provider.
+        """
+
+        manager = self._require_model_manager()
+
+        return manager.models_for_provider(
+            provider_id
+        )
+
+    def refresh_models(
+        self,
+        provider_id: str,
+    ) -> tuple[
+        ModelDefinition,
+        ...,
+    ]:
+        """
+        Refresh models exposed by one discoverable provider.
+
+        For Ollama this queries the local Ollama API.
+        """
+
+        manager = self._require_model_manager()
+
+        return manager.refresh_provider(
+            provider_id
+        )
+
+    def set_runtime_mode(
+        self,
+        mode: RuntimeMode,
+    ) -> None:
+        """
+        Change the high-level AI runtime mode.
+        """
+
+        manager = self._require_model_manager()
+
+        manager.set_mode(
+            mode
+        )
+
+    def set_agent_engine(
+        self,
+        agent_engine: AgentEngineId,
+    ) -> None:
+        """
+        Store the desired agent engine.
+
+        Native/Hermes runtime switching will be wired through
+        the AgentEngine registry in a later milestone.
+        """
+
+        manager = self._require_model_manager()
+
+        manager.set_agent_engine(
+            agent_engine
+        )
+
+    def model_selection(
+        self,
+        role: ModelRole,
+    ) -> ModelSelection | None:
+        """
+        Return the model assigned to one runtime role.
+        """
+
+        manager = self._require_model_manager()
+
+        return manager.profile().model_for(
+            role
+        )
+
+    def set_model_for_role(
+        self,
+        role: ModelRole,
+        provider_id: str,
+        model_id: str,
+    ) -> None:
+        """
+        Assign a model to one runtime role.
+
+        Changing MAIN immediately switches the model used by
+        ask() and the native conversational agent.
+
+        Other roles are persisted now and will be consumed by
+        specialized agents/router components later.
+        """
+
+        manager = self._require_model_manager()
+
+        manager.set_model(
+            role,
+            provider_id,
+            model_id,
+        )
+
+        if role is ModelRole.MAIN:
+            self._activate_main_model()
+
+    def _activate_main_model(
+        self,
+    ) -> None:
+        """
+        Rebuild the active provider and native AgentService
+        from the MAIN model selection.
+
+        Conversation history is intentionally preserved.
+        """
+
+        manager = self._require_model_manager()
+
+        provider = manager.build_provider(
+            ModelRole.MAIN
+        )
+
+        self.model_provider = provider
+
+        self.agent_service = self._build_agent_service(
+            provider
+        )
+
+    def _require_model_manager(
+        self,
+    ) -> ModelManager:
+        if self.model_manager is None:
+            raise RuntimeError(
+                "Model management is not configured."
+            )
+
+        return self.model_manager
 
     # =================================================
     # CAPABILITY PERMISSIONS
