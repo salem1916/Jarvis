@@ -16,11 +16,16 @@ class ProviderDefinition(BaseModel):
     """
     Metadata describing one model provider.
 
-    This does NOT contain secrets such as API keys.
+    Secrets never belong here.
     """
 
-    provider_id: str = Field(min_length=1)
-    display_name: str = Field(min_length=1)
+    provider_id: str = Field(
+        min_length=1
+    )
+
+    display_name: str = Field(
+        min_length=1
+    )
 
     location: ModelLocation
 
@@ -33,20 +38,20 @@ class ProviderDefinition(BaseModel):
 
 class ModelDefinition(BaseModel):
     """
-    Metadata describing one model available to JARVIS.
-
-    This is intentionally separate from ModelProvider.
-
-    ModelProvider:
-        knows how to talk to a provider.
-
-    ModelDefinition:
-        tells JARVIS which model exists and what it can do.
+    Metadata describing one model known to JARVIS.
     """
 
-    provider_id: str = Field(min_length=1)
-    model_id: str = Field(min_length=1)
-    display_name: str = Field(min_length=1)
+    provider_id: str = Field(
+        min_length=1
+    )
+
+    model_id: str = Field(
+        min_length=1
+    )
+
+    display_name: str = Field(
+        min_length=1
+    )
 
     location: ModelLocation
 
@@ -68,15 +73,9 @@ class ModelDefinition(BaseModel):
     )
 
     @property
-    def key(self) -> str:
-        """
-        Stable provider/model identifier.
-
-        Example:
-
-            ollama:qwen3.5:4b
-        """
-
+    def key(
+        self,
+    ) -> str:
         return (
             f"{self.provider_id}:"
             f"{self.model_id}"
@@ -87,13 +86,15 @@ class ModelCatalog:
     """
     Runtime catalog of providers and models known to JARVIS.
 
-    The catalog contains metadata only.
+    Metadata only.
 
-    It does NOT hold API keys.
-    It does NOT execute inference.
+    No API keys.
+    No inference.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+    ) -> None:
         self._providers: dict[
             str,
             ProviderDefinition,
@@ -121,23 +122,74 @@ class ModelCatalog:
         model: ModelDefinition,
     ) -> None:
         """
-        Register or replace model metadata.
+        Register or replace one model.
 
         Its provider must already exist.
         """
 
-        if (
+        self._require_provider(
             model.provider_id
-            not in self._providers
-        ):
-            raise ValueError(
-                "Model provider is not registered: "
-                f"{model.provider_id}"
-            )
+        )
 
         self._models[
             model.key
         ] = model
+
+    def replace_models_for_provider(
+        self,
+        provider_id: str,
+        models: tuple[
+            ModelDefinition,
+            ...,
+        ],
+    ) -> None:
+        """
+        Replace one provider's model list atomically.
+
+        This is useful for live discovery.
+
+        Example:
+
+            user removes an Ollama model outside JARVIS
+                ↓
+            refresh discovery
+                ↓
+            stale model disappears from the catalog
+        """
+
+        self._require_provider(
+            provider_id
+        )
+
+        for model in models:
+            if (
+                model.provider_id
+                != provider_id
+            ):
+                raise ValueError(
+                    "Discovered model belongs to the "
+                    "wrong provider."
+                )
+
+        keys_to_remove = [
+            key
+            for key, model
+            in self._models.items()
+            if (
+                model.provider_id
+                == provider_id
+            )
+        ]
+
+        for key in keys_to_remove:
+            del self._models[
+                key
+            ]
+
+        for model in models:
+            self._models[
+                model.key
+            ] = model
 
     def provider(
         self,
@@ -189,10 +241,6 @@ class ModelCatalog:
         ProviderDefinition,
         ...,
     ]:
-        """
-        Return all registered providers.
-        """
-
         return tuple(
             self._providers.values()
         )
@@ -203,10 +251,6 @@ class ModelCatalog:
         ModelDefinition,
         ...,
     ]:
-        """
-        Return all registered models.
-        """
-
         return tuple(
             self._models.values()
         )
@@ -218,10 +262,6 @@ class ModelCatalog:
         ModelDefinition,
         ...,
     ]:
-        """
-        Return models belonging to one provider.
-        """
-
         return tuple(
             model
             for model
@@ -231,3 +271,16 @@ class ModelCatalog:
                 == provider_id
             )
         )
+
+    def _require_provider(
+        self,
+        provider_id: str,
+    ) -> None:
+        if (
+            provider_id
+            not in self._providers
+        ):
+            raise ValueError(
+                "Model provider is not registered: "
+                f"{provider_id}"
+            )

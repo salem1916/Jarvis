@@ -124,3 +124,75 @@ def test_catalog_filters_models_by_provider() -> None:
         models[0].model_id
         == "local-model"
     )
+
+
+def test_replace_provider_models_removes_stale_entries() -> None:
+    catalog = ModelCatalog()
+
+    catalog.register_provider(
+        ProviderDefinition(
+            provider_id="ollama",
+            display_name="Ollama",
+            location=ModelLocation.LOCAL,
+        )
+    )
+
+    catalog.register_model(
+        ModelDefinition(
+            provider_id="ollama",
+            model_id="old-model",
+            display_name="Old Model",
+            location=ModelLocation.LOCAL,
+        )
+    )
+
+    catalog.replace_models_for_provider(
+        "ollama",
+        (
+            ModelDefinition(
+                provider_id="ollama",
+                model_id="new-model",
+                display_name="New Model",
+                location=ModelLocation.LOCAL,
+            ),
+        ),
+    )
+
+    models = catalog.models_for_provider(
+        "ollama"
+    )
+
+    assert [
+        model.model_id
+        for model in models
+    ] == [
+        "new-model"
+    ]
+
+
+def test_replace_rejects_wrong_provider_models() -> None:
+    catalog = ModelCatalog()
+
+    catalog.register_provider(
+        ProviderDefinition(
+            provider_id="ollama",
+            display_name="Ollama",
+            location=ModelLocation.LOCAL,
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="wrong provider",
+    ):
+        catalog.replace_models_for_provider(
+            "ollama",
+            (
+                ModelDefinition(
+                    provider_id="other",
+                    model_id="model",
+                    display_name="Model",
+                    location=ModelLocation.CLOUD,
+                ),
+            ),
+        )

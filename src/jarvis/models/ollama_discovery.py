@@ -11,15 +11,14 @@ class OllamaDiscoveryService:
     Discover models installed in the user's local Ollama
     installation.
 
-    Discovery uses Ollama's local HTTP API:
+    Discovery uses:
 
         GET /api/tags
 
-    Discovery does NOT install or delete anything.
-
-    It is therefore safe to use for refreshing the future
-    Models page.
+    It never installs or removes models.
     """
+
+    provider_id = "ollama"
 
     def __init__(
         self,
@@ -41,13 +40,7 @@ class OllamaDiscoveryService:
         ...,
     ]:
         """
-        Return the models currently installed in Ollama.
-
-        The /api/tags endpoint identifies installed models but
-        does not give JARVIS enough provider-independent
-        capability information to safely infer every feature.
-
-        Capability probing will therefore be a separate layer.
+        Return models currently installed in Ollama.
         """
 
         try:
@@ -135,26 +128,15 @@ class OllamaDiscoveryService:
             discovered[
                 model_id
             ] = ModelDefinition(
-                provider_id="ollama",
+                provider_id=self.provider_id,
                 model_id=model_id,
                 display_name=model_id,
                 location=ModelLocation.LOCAL,
-
-                # It is already present locally.
                 installed=True,
-
-                # Later the model manager will support
-                # ollama pull / delete through trusted code.
                 installable=True,
-
-                # Ollama's chat API supports streaming.
                 supports_streaming=True,
 
-                # We intentionally do NOT guess these from
-                # the model's name.
-                #
-                # A capability-probing service will determine
-                # these accurately later.
+                # Capability probing comes later.
                 supports_tools=False,
                 supports_reasoning=False,
             )
@@ -162,4 +144,3 @@ class OllamaDiscoveryService:
         return tuple(
             discovered.values()
         )
-    
