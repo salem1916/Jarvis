@@ -474,10 +474,10 @@ def test_multi_step_request_requires_multiple_capabilities() -> None:
     required = (
         AgentService
         ._infer_required_capabilities(
-            (
+            
                 "Open Notepad, type hello, "
                 "then save it."
-            )
+            
         )
     )
 
