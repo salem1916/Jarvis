@@ -1,7 +1,21 @@
 from jarvis.core.application import JarvisApplication
 from jarvis.core.config import JarvisSettings
 from jarvis.models.base import ModelProvider
+from jarvis.models.catalog import (
+    ModelCatalog,
+    ModelDefinition,
+    ModelLocation,
+    ProviderDefinition,
+)
 from jarvis.models.ollama import OllamaProvider
+from jarvis.models.ollama_discovery import OllamaDiscoveryService
+from jarvis.models.provider_registry import ProviderRegistry
+from jarvis.runtime.model_manager import ModelManager
+from jarvis.runtime.profile import (
+    ModelRole,
+    RuntimeProfile,
+)
+from jarvis.runtime.profile_store import RuntimeProfileStore
 from jarvis.security.capabilities import Capability
 from jarvis.security.filesystem_scope import FilesystemScopePolicy
 from jarvis.security.filesystem_scope_store import FilesystemScopeStore
@@ -50,22 +64,180 @@ from jarvis.tools.window_catalog import (
 from jarvis.tools.write_file import WriteFileTool
 
 
+def build_model_manager(
+    settings: JarvisSettings,
+) -> ModelManager:
+    """
+    Build JARVIS's model-management runtime.
+
+    This is the composition root for:
+
+        - provider metadata
+        - provider factories
+        - model discovery
+        - runtime profile
+        - runtime-profile persistence
+
+    No model is contacted during construction.
+    """
+
+    # =================================================
+    # MODEL CATALOG
+    # =================================================
+
+    catalog = ModelCatalog()
+
+    catalog.register_provider(
+        ProviderDefinition(
+            provider_id="ollama",
+            display_name="Ollama",
+            location=ModelLocation.LOCAL,
+            requires_api_key=False,
+            supports_model_discovery=True,
+            supports_model_installation=True,
+            openai_compatible=False,
+        )
+    )
+
+    # =================================================
+    # PROVIDER REGISTRY
+    # =================================================
+
+    provider_registry = ProviderRegistry()
+
+    provider_registry.register(
+        "ollama",
+        lambda model_id: OllamaProvider(
+            model=model_id,
+            base_url=settings.ollama_base_url,
+        ),
+    )
+
+    # =================================================
+    # RUNTIME PROFILE
+    # =================================================
+
+    profile_store: RuntimeProfileStore | None = None
+
+    if settings.persist_runtime_profile:
+        profile_store = RuntimeProfileStore(
+            settings.state_dir
+            / "runtime_profile.json"
+        )
+
+        profile = profile_store.load()
+
+    else:
+        profile = RuntimeProfile()
+
+    # =================================================
+    # BOOTSTRAP KNOWN MODELS
+    # =================================================
+
+    # The .env/default Ollama model must be known before any
+    # live discovery happens so JARVIS can always start with
+    # its configured fallback.
+    known_ollama_models: set[str] = {
+        settings.ollama_model,
+    }
+
+    # Also preserve Ollama models referenced by an existing
+    # runtime profile.
+    #
+    # Live Ollama discovery later confirms what is currently
+    # installed and replaces this provider's catalog entries.
+    for selection in profile.models.values():
+        if selection.provider_id == "ollama":
+            known_ollama_models.add(
+                selection.model_id
+            )
+
+    for model_id in sorted(
+        known_ollama_models
+    ):
+        catalog.register_model(
+            ModelDefinition(
+                provider_id="ollama",
+                model_id=model_id,
+                display_name=model_id,
+                location=ModelLocation.LOCAL,
+
+                # Installation state is not assumed here.
+                #
+                # refresh_models("ollama") obtains the real
+                # installed list from Ollama.
+                installed=False,
+                installable=True,
+
+                # Capability probing is a separate concern.
+                supports_tools=False,
+                supports_reasoning=False,
+                supports_streaming=True,
+            )
+        )
+
+    # =================================================
+    # DISCOVERY
+    # =================================================
+
+    ollama_discovery = OllamaDiscoveryService(
+        base_url=settings.ollama_base_url
+    )
+
+    manager = ModelManager(
+        catalog=catalog,
+        provider_registry=provider_registry,
+        profile=profile,
+        profile_store=profile_store,
+        discovery_services=(
+            ollama_discovery,
+        ),
+    )
+
+    # =================================================
+    # SAFE DEFAULT MAIN MODEL
+    # =================================================
+
+    main_selection = profile.model_for(
+        ModelRole.MAIN
+    )
+
+    # Existing profiles from future/experimental providers must
+    # not prevent JARVIS from starting when that provider is not
+    # currently registered.
+    if (
+        main_selection is None
+        or not provider_registry.contains(
+            main_selection.provider_id
+        )
+    ):
+        manager.set_model(
+            ModelRole.MAIN,
+            "ollama",
+            settings.ollama_model,
+        )
+
+    return manager
+
+
 def build_model_provider(
     settings: JarvisSettings,
 ) -> ModelProvider:
     """
-    Build the configured AI model backend.
+    Build the active MAIN model provider.
+
+    Kept as a public bootstrap helper for compatibility.
+
+    Provider selection now goes through ModelManager instead of
+    provider-specific branching.
     """
 
-    if settings.model_provider == "ollama":
-        return OllamaProvider(
-            model=settings.ollama_model,
-            base_url=settings.ollama_base_url,
-        )
+    manager = build_model_manager(
+        settings
+    )
 
-    raise ValueError(
-        "Unsupported model provider: "
-        f"{settings.model_provider}"
+    return manager.build_provider(
+        ModelRole.MAIN
     )
 
 
@@ -358,13 +530,26 @@ def build_application(
         executor,
     )
 
-    model_provider = build_model_provider(
+    # =================================================
+    # MODEL RUNTIME
+    # =================================================
+
+    model_manager = build_model_manager(
         settings
     )
+
+    model_provider = model_manager.build_provider(
+        ModelRole.MAIN
+    )
+
+    # =================================================
+    # APPLICATION
+    # =================================================
 
     return JarvisApplication(
         tool_service=tool_service,
         model_provider=model_provider,
+        model_manager=model_manager,
         filesystem_scope_policy=filesystem_scope_policy,
         filesystem_scope_store=filesystem_scope_store,
         permission_mode_store=permission_mode_store,

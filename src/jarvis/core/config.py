@@ -46,6 +46,14 @@ class JarvisSettings(BaseSettings):
     allow_read_file: bool = False
     allow_system_info: bool = False
 
+    # -------------------------------------------------
+    # Legacy/default model bootstrap configuration.
+    #
+    # These remain useful as safe startup defaults while
+    # RuntimeProfile becomes the user's real model-selection
+    # source of truth.
+    # -------------------------------------------------
+
     model_provider: str = "ollama"
 
     ollama_model: str = "qwen3.5:4b"
@@ -62,17 +70,22 @@ class JarvisSettings(BaseSettings):
 
     persist_permission_modes: bool = False
 
+    persist_runtime_profile: bool = False
+
 
 class _EnvJarvisSettings(JarvisSettings):
     """
     Real JARVIS runtime configuration.
 
-    User-approved scopes and permission modes persist by
-    default in the real desktop application.
+    User-approved scopes, permission modes, and runtime model
+    choices persist by default in the desktop application.
     """
 
     persist_filesystem_scopes: bool = True
+
     persist_permission_modes: bool = True
+
+    persist_runtime_profile: bool = True
 
     model_config = SettingsConfigDict(
         env_prefix="JARVIS_",
