@@ -31,7 +31,7 @@ class OllamaProvider(ModelProvider):
         self,
         model: str,
         base_url: str = "http://127.0.0.1:11434",
-        timeout: float = 60.0,
+        timeout: float = 120.0,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
