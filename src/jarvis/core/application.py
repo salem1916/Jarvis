@@ -1,8 +1,13 @@
 from pathlib import Path
 
-from jarvis.core.action_confirmation import ActionConfirmationHandler
+from jarvis.core.action_confirmation import (
+    ActionConfirmationHandler,
+    ActionConfirmationRequest,
+    ActionDeclinedError,
+)
 from jarvis.core.agent_service import AgentService
 from jarvis.core.conversation import Conversation
+from jarvis.core.fast_command_router import FastCommandRouter
 from jarvis.core.tool_request import ToolRequest
 from jarvis.models.base import (
     ModelProvider,
@@ -29,6 +34,9 @@ from jarvis.security.permission_mode_store import PermissionModeStore
 from jarvis.security.policy import (
     PermissionDecision,
 )
+from jarvis.tools.executor import (
+    ConfirmationRequiredError,
+)
 from jarvis.tools.service import ToolService
 
 
@@ -39,6 +47,25 @@ class JarvisApplication:
     The UI and CLI should communicate with this facade instead
     of directly manipulating model providers, permissions, or
     trusted tools.
+
+    Simple deterministic commands may use the FastCommandRouter
+    before entering the model/agent runtime.
+
+    The fast router never executes tools directly.
+
+    Trusted execution remains:
+
+        FastCommandRouter / Agent
+                    ↓
+                ToolRequest
+                    ↓
+                ToolService
+                    ↓
+            PermissionPolicy
+                    ↓
+                ToolExecutor
+                    ↓
+                trusted Tool
     """
 
     def __init__(
@@ -53,6 +80,7 @@ class JarvisApplication:
             PermissionMode,
         ] | None = None,
         model_manager: ModelManager | None = None,
+        fast_command_router: FastCommandRouter | None = None,
     ) -> None:
         self.tool_service = tool_service
 
@@ -71,12 +99,19 @@ class JarvisApplication:
         # Persistent fallback state is kept separately.
         #
         # ALLOW_SESSION never belongs here.
+
         self._persistent_permission_modes = {
             capability: mode
             for capability, mode
             in self._permission_modes.items()
             if mode is not PermissionMode.ALLOW_SESSION
         }
+
+        self.fast_command_router = (
+            fast_command_router
+            if fast_command_router is not None
+            else FastCommandRouter()
+        )
 
         self.agent_service = self._build_agent_service(
             model_provider
@@ -120,6 +155,152 @@ class JarvisApplication:
             confirmed=confirmed,
         )
 
+    def _execute_tool_with_confirmation(
+        self,
+        request: ToolRequest,
+        confirmation_handler: ActionConfirmationHandler | None,
+    ) -> object:
+        """
+        Execute one trusted ToolRequest while preserving the
+        same user-confirmation boundary used by AgentService.
+
+        The fast command router cannot bypass permissions.
+
+        If policy requires confirmation:
+
+            no handler
+                -> propagate ConfirmationRequiredError
+
+            user declines
+                -> ActionDeclinedError
+
+            user approves
+                -> execute this exact request once with
+                   confirmed=True
+        """
+
+        try:
+            return self.tool_service.execute(
+                request
+            )
+
+        except ConfirmationRequiredError:
+            if confirmation_handler is None:
+                raise
+
+            tool = self.tool_service.registry.get(
+                request.tool_name
+            )
+
+            confirmation = ActionConfirmationRequest(
+                tool_name=request.tool_name,
+                capability=tool.required_capability,
+                arguments=dict(
+                    request.arguments
+                ),
+            )
+
+            approved = confirmation_handler.confirm(
+                confirmation
+            )
+
+            if not approved:
+                raise ActionDeclinedError(
+                    "The user declined the requested action."
+                )
+
+            return self.tool_service.execute(
+                request,
+                confirmed=True,
+            )
+
+    # =================================================
+    # FAST COMMAND PATH
+    # =================================================
+
+    def _try_fast_command(
+        self,
+        prompt: str,
+        confirmation_handler: ActionConfirmationHandler | None,
+    ) -> str | None:
+        """
+        Attempt deterministic execution for a simple,
+        unambiguous command.
+
+        Return:
+
+            str
+                Fast command executed successfully.
+
+            None
+                Request should continue to the normal agent.
+
+        Fast-path execution is intentionally conservative.
+
+        If an application name cannot be resolved, JARVIS
+        falls back to the agent, which can use discovery tools
+        such as list_applications.
+        """
+
+        request = self.fast_command_router.route(
+            prompt
+        )
+
+        if request is None:
+            return None
+
+        try:
+            result = self._execute_tool_with_confirmation(
+                request=request,
+                confirmation_handler=confirmation_handler,
+            )
+
+        except (
+            KeyError,
+            ValueError,
+        ):
+            # The deterministic interpretation was valid, but
+            # trusted resolution could not identify the target.
+            #
+            # Fall back to the normal agent instead of guessing.
+            return None
+
+        return self._format_fast_command_result(
+            request=request,
+            result=result,
+        )
+
+    @staticmethod
+    def _format_fast_command_result(
+        request: ToolRequest,
+        result: object,
+    ) -> str:
+        """
+        Produce a small deterministic response from trusted tool
+        output without making another LLM call.
+        """
+
+        if (
+            request.tool_name == "open_application"
+            and isinstance(
+                result,
+                dict,
+            )
+        ):
+            application = result.get(
+                "application"
+            )
+
+            if isinstance(
+                application,
+                str,
+            ):
+                return (
+                    f"Opened {application}."
+                )
+
+        return "Done."
+
     # =================================================
     # MODEL / AGENT EXECUTION
     # =================================================
@@ -147,8 +328,22 @@ class JarvisApplication:
         confirmation_handler: ActionConfirmationHandler | None = None,
     ) -> str:
         """
-        Main conversational agent path.
+        Main conversational execution path.
+
+        Simple deterministic commands attempt the trusted fast
+        path first.
+
+        Requests that are not safely recognized continue through
+        the normal AI agent.
         """
+
+        fast_response = self._try_fast_command(
+            prompt=prompt,
+            confirmation_handler=confirmation_handler,
+        )
+
+        if fast_response is not None:
+            return fast_response
 
         return self.agent_service.run(
             prompt=prompt,
