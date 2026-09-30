@@ -19,6 +19,7 @@ from jarvis.tools.executor import (
     ConfirmationRequiredError,
     PermissionDeniedError,
 )
+from jarvis.tools.selector import ToolSelector
 from jarvis.tools.service import ToolService
 
 # =========================================================
@@ -105,6 +106,10 @@ class AgentService:
             ↓
         trusted goal requirements
             ↓
+        ToolSelector
+            ↓
+        selected tool definitions
+            ↓
         Model
             ↓
         ToolRequest
@@ -133,6 +138,7 @@ class AgentService:
         tool_service: ToolService,
         max_tool_rounds: int = 5,
         max_completion_retries: int = 2,
+        tool_selector: ToolSelector | None = None,
     ) -> None:
         if max_tool_rounds < 1:
             raise ValueError(
@@ -148,6 +154,13 @@ class AgentService:
         self.tool_service = tool_service
         self.max_tool_rounds = max_tool_rounds
         self.max_completion_retries = max_completion_retries
+
+        self.tool_selector = (
+            tool_selector
+            or ToolSelector(
+                tool_service.registry
+            )
+        )
 
     def run(
         self,
@@ -167,13 +180,32 @@ class AgentService:
         the model is allowed to finish.
         """
 
+        # =================================================
+        # RELEVANT TOOL SELECTION
+        # =================================================
+        #
+        # Instead of exposing every registered JARVIS tool to
+        # the model for every request, expose the smallest
+        # useful subset when we can identify the task.
+        #
+        # This reduces model prompt size and local-model
+        # latency.
+        #
+        # ToolSelector is NOT a security boundary.
+        # All execution still goes through ToolService.
+        # =================================================
+
+        selected_tools = self.tool_selector.select(
+            prompt
+        )
+
         available_tools = [
             ModelToolDefinition(
                 name=tool.name,
                 description=tool.description,
                 parameters=tool.parameters_schema,
             )
-            for tool in self.tool_service.registry.tools()
+            for tool in selected_tools
         ]
 
         if conversation is not None:
@@ -284,6 +316,7 @@ class AgentService:
                     # has not actually happened.
                     #
                     # Remove that answer from working history.
+
                     messages.pop()
 
                     if (
@@ -427,13 +460,13 @@ class AgentService:
                     )
 
                 messages.append(
-    ModelMessage(
-        role="tool",
-        tool_name=tool_call.name,
-        tool_call_id=tool_call.call_id,
-        content=tool_content,
-    )
-)
+                    ModelMessage(
+                        role="tool",
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.call_id,
+                        content=tool_content,
+                    )
+                )
 
             tool_rounds_used += 1
 
@@ -506,6 +539,7 @@ class AgentService:
             # immediate ToolRequest.
             #
             # ToolExecutor still rejects DENY decisions.
+
             return self.tool_service.execute(
                 request,
                 confirmed=True,
