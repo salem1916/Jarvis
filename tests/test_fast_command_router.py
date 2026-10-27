@@ -42,6 +42,62 @@ def test_removes_optional_the_prefix() -> None:
     }
 
 
+def test_routes_known_website() -> None:
+    router = FastCommandRouter()
+
+    request = router.route(
+        "Open Facebook"
+    )
+
+    assert request is not None
+    assert request.tool_name == "open_url"
+    assert request.arguments == {
+        "url": "https://www.facebook.com/",
+    }
+
+
+def test_routes_known_website_with_visit() -> None:
+    router = FastCommandRouter()
+
+    request = router.route(
+        "Visit YouTube"
+    )
+
+    assert request is not None
+    assert request.tool_name == "open_url"
+    assert request.arguments == {
+        "url": "https://www.youtube.com/",
+    }
+
+
+def test_routes_full_https_url() -> None:
+    router = FastCommandRouter()
+
+    request = router.route(
+        "Open https://example.com/test"
+    )
+
+    assert request is not None
+    assert request.tool_name == "open_url"
+    assert request.arguments == {
+        "url": "https://example.com/test",
+    }
+
+
+def test_routes_domain_without_scheme() -> None:
+    router = FastCommandRouter()
+
+    request = router.route(
+        "Open example.com"
+    )
+
+    assert request is not None
+    assert request.tool_name == "open_url"
+    assert request.arguments == {
+        "url": "https://example.com",
+    }
+
+
 def test_informational_question_does_not_fast_route() -> None:
     router = FastCommandRouter()
 

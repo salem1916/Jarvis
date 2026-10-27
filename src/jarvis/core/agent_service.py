@@ -223,6 +223,13 @@ class AgentService:
             for message in messages
         )
 
+        if system_prompt and has_system_message:
+            # Preferences may change between turns; don't keep a stale memory snapshot.
+            for message in messages:
+                if message.role == "system":
+                    message.content = system_prompt
+                    break
+
         if (
             system_prompt
             and not has_system_message

@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
+    QLayout,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -20,12 +23,12 @@ from jarvis.runtime.profile import (
 
 class ModelsPage(QWidget):
     """
-    Runtime model and agent configuration page.
+    JARVIS model/provider/agent configuration page.
 
-    This page talks only to JarvisApplication.
+    The page talks only to JarvisApplication.
 
-    It never creates providers directly and never stores
-    credentials.
+    Provider credentials and model construction remain outside
+    the UI.
     """
 
     runtime_changed = Signal()
@@ -39,6 +42,11 @@ class ModelsPage(QWidget):
         self.jarvis = jarvis
         self._updating_ui = False
 
+        self._provider_status: dict[
+            str,
+            str,
+        ] = {}
+
         self._build_interface()
         self._sync_from_runtime()
 
@@ -49,20 +57,63 @@ class ModelsPage(QWidget):
     def _build_interface(
         self,
     ) -> None:
-        root = QVBoxLayout(
+        outer_layout = QVBoxLayout(
             self
+        )
+
+        outer_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        scroll_area = QScrollArea()
+
+        scroll_area.setWidgetResizable(
+            True
+        )
+
+        scroll_area.setFrameShape(
+            QFrame.Shape.NoFrame
+        )
+
+        content = QWidget()
+
+        content.setObjectName(
+            "modelsPageContent"
+        )
+
+        root = QVBoxLayout(
+            content
+        )
+
+        root.setSizeConstraint(
+            QLayout.SizeConstraint.SetMinimumSize
         )
 
         root.setContentsMargins(
             28,
             24,
             28,
-            24,
+            28,
         )
 
         root.setSpacing(
             18
         )
+
+        scroll_area.setWidget(
+            content
+        )
+
+        outer_layout.addWidget(
+            scroll_area
+        )
+
+        # =================================================
+        # TITLE
+        # =================================================
 
         title = QLabel(
             "Models & Agents"
@@ -77,10 +128,10 @@ class ModelsPage(QWidget):
         )
 
         description = QLabel(
-            "Choose how JARVIS thinks. Local models run on "
-            "this computer. Cloud providers and Hermes can "
-            "be added without changing the trusted JARVIS "
-            "tool and permission layer."
+            "Configure how JARVIS thinks. Providers and models "
+            "are independent from the trusted JARVIS tool and "
+            "security layer. Local and cloud models can be "
+            "changed without changing the PC-control system."
         )
 
         description.setObjectName(
@@ -101,23 +152,32 @@ class ModelsPage(QWidget):
 
         runtime_card = QFrame()
 
+        runtime_card.setObjectName(
+            "modelCard"
+        )
+
         runtime_layout = QGridLayout(
             runtime_card
         )
 
         runtime_layout.setContentsMargins(
+            20,
             18,
-            18,
-            18,
-            18,
+            20,
+            20,
         )
 
         runtime_layout.setHorizontalSpacing(
-            18
+            24
         )
 
         runtime_layout.setVerticalSpacing(
-            12
+            14
+        )
+
+        runtime_layout.setColumnStretch(
+            1,
+            1,
         )
 
         runtime_heading = QLabel(
@@ -135,10 +195,6 @@ class ModelsPage(QWidget):
             1,
             2,
         )
-
-        # -------------------------------------------------
-        # AI mode
-        # -------------------------------------------------
 
         mode_label = QLabel(
             "AI mode"
@@ -158,7 +214,7 @@ class ModelsPage(QWidget):
         )
 
         self.mode_combo.addItem(
-            "Local",
+            "Local Only",
             RuntimeMode.LOCAL.value,
         )
 
@@ -183,9 +239,9 @@ class ModelsPage(QWidget):
         )
 
         mode_help = QLabel(
-            "The preference is saved now. Automatic model "
-            "routing will consume this setting when the "
-            "ModelRouter is added."
+            "Auto will eventually choose models using privacy, "
+            "latency, cost, capabilities and task difficulty. "
+            "Local Only prevents cloud routing."
         )
 
         mode_help.setObjectName(
@@ -201,10 +257,6 @@ class ModelsPage(QWidget):
             2,
             1,
         )
-
-        # -------------------------------------------------
-        # Agent engine
-        # -------------------------------------------------
 
         agent_label = QLabel(
             "Agent engine"
@@ -229,7 +281,7 @@ class ModelsPage(QWidget):
         )
 
         self.agent_combo.addItem(
-            "Hermes — not connected yet",
+            "Hermes",
             AgentEngineId.HERMES.value,
         )
 
@@ -244,9 +296,10 @@ class ModelsPage(QWidget):
         )
 
         agent_help = QLabel(
-            "Native JARVIS is available now. Hermes will be "
-            "connected through the AgentEngine abstraction "
-            "in the next agent-runtime milestone."
+            "Native JARVIS talks directly to the selected MAIN "
+            "model. Hermes handles more agentic workflows while "
+            "Windows actions remain behind JARVIS's trusted MCP "
+            "bridge and permission layer."
         )
 
         agent_help.setObjectName(
@@ -268,32 +321,189 @@ class ModelsPage(QWidget):
         )
 
         # =================================================
-        # MODEL ROLES
+        # PROVIDER HUB
+        # =================================================
+
+        provider_card = QFrame()
+
+        provider_card.setObjectName(
+            "modelCard"
+        )
+
+        provider_layout = QGridLayout(
+            provider_card
+        )
+
+        provider_layout.setContentsMargins(
+            20,
+            18,
+            20,
+            20,
+        )
+
+        provider_layout.setHorizontalSpacing(
+            18
+        )
+
+        provider_layout.setVerticalSpacing(
+            14
+        )
+
+        provider_layout.setColumnStretch(
+            1,
+            1,
+        )
+
+        provider_heading = QLabel(
+            "PROVIDER HUB"
+        )
+
+        provider_heading.setObjectName(
+            "sectionTitle"
+        )
+
+        provider_layout.addWidget(
+            provider_heading,
+            0,
+            0,
+            1,
+            3,
+        )
+
+        provider_label = QLabel(
+            "Provider"
+        )
+
+        provider_layout.addWidget(
+            provider_label,
+            1,
+            0,
+        )
+
+        self.provider_combo = QComboBox()
+
+        self.provider_combo.currentIndexChanged.connect(
+            self._on_provider_changed
+        )
+
+        provider_layout.addWidget(
+            self.provider_combo,
+            1,
+            1,
+        )
+
+        self.refresh_provider_button = QPushButton(
+            "Refresh Provider"
+        )
+
+        self.refresh_provider_button.clicked.connect(
+            self._refresh_selected_provider
+        )
+
+        provider_layout.addWidget(
+            self.refresh_provider_button,
+            1,
+            2,
+        )
+
+        discovery_label = QLabel(
+            "Discovery"
+        )
+
+        provider_layout.addWidget(
+            discovery_label,
+            2,
+            0,
+        )
+
+        self.refresh_all_button = QPushButton(
+            "Refresh All Providers"
+        )
+
+        self.refresh_all_button.clicked.connect(
+            self._refresh_all_providers
+        )
+
+        provider_layout.addWidget(
+            self.refresh_all_button,
+            2,
+            1,
+            1,
+            2,
+        )
+
+        self.provider_detail_label = QLabel()
+
+        self.provider_detail_label.setObjectName(
+            "mutedText"
+        )
+
+        self.provider_detail_label.setWordWrap(
+            True
+        )
+
+        provider_layout.addWidget(
+            self.provider_detail_label,
+            3,
+            1,
+            1,
+            2,
+        )
+
+        self.provider_catalog_label = QLabel()
+
+        self.provider_catalog_label.setWordWrap(
+            True
+        )
+
+        provider_layout.addWidget(
+            self.provider_catalog_label,
+            4,
+            0,
+            1,
+            3,
+        )
+
+        root.addWidget(
+            provider_card
+        )
+
+        # =================================================
+        # MAIN MODEL
         # =================================================
 
         model_card = QFrame()
+
+        model_card.setObjectName(
+            "modelCard"
+        )
 
         model_layout = QGridLayout(
             model_card
         )
 
         model_layout.setContentsMargins(
+            20,
             18,
-            18,
-            18,
-            18,
+            20,
+            20,
         )
 
         model_layout.setHorizontalSpacing(
-            18
+            24
         )
 
         model_layout.setVerticalSpacing(
-            12
+            14
+        )
+
+        model_layout.setColumnStretch(
+            1,
+            1,
         )
 
         model_heading = QLabel(
-            "MODEL ROLES"
+            "MAIN MODEL"
         )
 
         model_heading.setObjectName(
@@ -330,100 +540,19 @@ class ModelsPage(QWidget):
             1,
         )
 
-        main_help = QLabel(
-            "Changing this model takes effect immediately "
-            "for new JARVIS requests."
-        )
+        self.main_model_help = QLabel()
 
-        main_help.setObjectName(
+        self.main_model_help.setObjectName(
             "mutedText"
         )
 
-        main_help.setWordWrap(
+        self.main_model_help.setWordWrap(
             True
         )
 
         model_layout.addWidget(
-            main_help,
+            self.main_model_help,
             2,
-            1,
-        )
-
-        worker_label = QLabel(
-            "Worker brain"
-        )
-
-        model_layout.addWidget(
-            worker_label,
-            3,
-            0,
-        )
-
-        self.worker_combo = QComboBox()
-
-        self.worker_combo.addItem(
-            "Auto — router coming next"
-        )
-
-        self.worker_combo.setEnabled(
-            False
-        )
-
-        model_layout.addWidget(
-            self.worker_combo,
-            3,
-            1,
-        )
-
-        coding_label = QLabel(
-            "Coding brain"
-        )
-
-        model_layout.addWidget(
-            coding_label,
-            4,
-            0,
-        )
-
-        self.coding_combo = QComboBox()
-
-        self.coding_combo.addItem(
-            "Auto — specialized routing coming later"
-        )
-
-        self.coding_combo.setEnabled(
-            False
-        )
-
-        model_layout.addWidget(
-            self.coding_combo,
-            4,
-            1,
-        )
-
-        research_label = QLabel(
-            "Research brain"
-        )
-
-        model_layout.addWidget(
-            research_label,
-            5,
-            0,
-        )
-
-        self.research_combo = QComboBox()
-
-        self.research_combo.addItem(
-            "Auto — specialized routing coming later"
-        )
-
-        self.research_combo.setEnabled(
-            False
-        )
-
-        model_layout.addWidget(
-            self.research_combo,
-            5,
             1,
         )
 
@@ -432,70 +561,155 @@ class ModelsPage(QWidget):
         )
 
         # =================================================
-        # LOCAL MODELS
+        # SPECIALIZED BRAINS
         # =================================================
 
-        local_card = QFrame()
+        role_card = QFrame()
 
-        local_layout = QVBoxLayout(
-            local_card
+        role_card.setObjectName(
+            "modelCard"
         )
 
-        local_layout.setContentsMargins(
-            18,
-            18,
-            18,
-            18,
+        role_layout = QGridLayout(
+            role_card
         )
 
-        local_layout.setSpacing(
-            12
+        role_layout.setContentsMargins(
+            20,
+            18,
+            20,
+            20,
         )
 
-        local_header = QHBoxLayout()
-
-        local_heading = QLabel(
-            "LOCAL MODELS"
+        role_layout.setHorizontalSpacing(
+            24
         )
 
-        local_heading.setObjectName(
+        role_layout.setVerticalSpacing(
+            14
+        )
+
+        role_layout.setColumnStretch(
+            1,
+            1,
+        )
+
+        role_heading = QLabel(
+            "SPECIALIZED BRAINS"
+        )
+
+        role_heading.setObjectName(
             "sectionTitle"
         )
 
-        local_header.addWidget(
-            local_heading
+        role_layout.addWidget(
+            role_heading,
+            0,
+            0,
+            1,
+            2,
         )
 
-        local_header.addStretch()
-
-        self.refresh_button = QPushButton(
-            "Refresh Ollama"
+        worker_label = QLabel(
+            "Worker"
         )
 
-        self.refresh_button.clicked.connect(
-            self._refresh_ollama
+        role_layout.addWidget(
+            worker_label,
+            1,
+            0,
         )
 
-        local_header.addWidget(
-            self.refresh_button
+        self.worker_combo = QComboBox()
+
+        self.worker_combo.addItem(
+            "Auto — Agent Router milestone"
         )
 
-        local_layout.addLayout(
-            local_header
+        self.worker_combo.setEnabled(
+            False
         )
 
-        self.local_models_label = QLabel()
+        role_layout.addWidget(
+            self.worker_combo,
+            1,
+            1,
+        )
 
-        self.local_models_label.setWordWrap(
+        coding_label = QLabel(
+            "Coding"
+        )
+
+        role_layout.addWidget(
+            coding_label,
+            2,
+            0,
+        )
+
+        self.coding_combo = QComboBox()
+
+        self.coding_combo.addItem(
+            "Auto — specialized coding agent"
+        )
+
+        self.coding_combo.setEnabled(
+            False
+        )
+
+        role_layout.addWidget(
+            self.coding_combo,
+            2,
+            1,
+        )
+
+        research_label = QLabel(
+            "Research"
+        )
+
+        role_layout.addWidget(
+            research_label,
+            3,
+            0,
+        )
+
+        self.research_combo = QComboBox()
+
+        self.research_combo.addItem(
+            "Auto — specialized research agent"
+        )
+
+        self.research_combo.setEnabled(
+            False
+        )
+
+        role_layout.addWidget(
+            self.research_combo,
+            3,
+            1,
+        )
+
+        role_help = QLabel(
+            "These roles become active with the Model Router "
+            "and Multi-Agent Orchestrator. Each specialist can "
+            "eventually use a different model."
+        )
+
+        role_help.setObjectName(
+            "mutedText"
+        )
+
+        role_help.setWordWrap(
             True
         )
 
-        local_layout.addWidget(
-            self.local_models_label
+        role_layout.addWidget(
+            role_help,
+            4,
+            1,
         )
 
         root.addWidget(
-            local_card
+            role_card
         )
 
         # =================================================
@@ -527,11 +741,6 @@ class ModelsPage(QWidget):
     def refresh_view(
         self,
     ) -> None:
-        """
-        Refresh the UI from trusted runtime state without
-        contacting external providers.
-        """
-
         self._sync_from_runtime()
 
     def _sync_from_runtime(
@@ -540,7 +749,9 @@ class ModelsPage(QWidget):
         self._updating_ui = True
 
         try:
-            profile = self.jarvis.runtime_profile()
+            profile = (
+                self.jarvis.runtime_profile()
+            )
 
             self._select_combo_value(
                 self.mode_combo,
@@ -552,27 +763,107 @@ class ModelsPage(QWidget):
                 profile.agent_engine.value,
             )
 
+            self._populate_providers()
             self._populate_main_models()
-
-            self._update_local_models_text()
+            self._update_provider_details()
+            self._update_provider_catalog()
 
         finally:
             self._updating_ui = False
 
+    def _populate_providers(
+        self,
+    ) -> None:
+        current_provider = (
+            self.provider_combo.currentData()
+        )
+
+        main_selection = (
+            self.jarvis.model_selection(
+                ModelRole.MAIN
+            )
+        )
+
+        target_provider: str | None = None
+
+        if isinstance(
+            current_provider,
+            str,
+        ):
+            target_provider = (
+                current_provider
+            )
+
+        elif main_selection is not None:
+            target_provider = (
+                main_selection.provider_id
+            )
+
+        self.provider_combo.blockSignals(
+            True
+        )
+
+        try:
+            self.provider_combo.clear()
+
+            providers = sorted(
+                self.jarvis.model_providers(),
+                key=lambda provider: (
+                    provider.display_name.lower()
+                ),
+            )
+
+            known_ids: set[str] = set()
+
+            for provider in providers:
+                known_ids.add(
+                    provider.provider_id
+                )
+
+                display = (
+                    f"{provider.display_name} "
+                    f"— {provider.location.value}"
+                )
+
+                self.provider_combo.addItem(
+                    display,
+                    provider.provider_id,
+                )
+
+            if (
+                (
+                    target_provider is None
+                    or target_provider not in known_ids
+                )
+                and main_selection is not None
+            ):
+                target_provider = (
+                    main_selection.provider_id
+                )
+
+            if target_provider is not None:
+                self._select_combo_value(
+                    self.provider_combo,
+                    target_provider,
+                )
+
+        finally:
+            self.provider_combo.blockSignals(
+                False
+            )
+
     def _populate_main_models(
         self,
     ) -> None:
-        current = self.jarvis.model_selection(
-            ModelRole.MAIN
+        provider_id = (
+            self._selected_provider_id()
         )
 
-        current_key: str | None = None
-
-        if current is not None:
-            current_key = self._model_key(
-                current.provider_id,
-                current.model_id,
+        current = (
+            self.jarvis.model_selection(
+                ModelRole.MAIN
             )
+        )
 
         self.main_model_combo.blockSignals(
             True
@@ -581,86 +872,239 @@ class ModelsPage(QWidget):
         try:
             self.main_model_combo.clear()
 
-            known_keys: set[str] = set()
-
-            for model in self.jarvis.available_models():
-                key = self._model_key(
-                    model.provider_id,
-                    model.model_id,
+            if provider_id is None:
+                self.main_model_combo.addItem(
+                    "No provider selected"
                 )
 
-                known_keys.add(
-                    key
+                self.main_model_combo.setEnabled(
+                    False
                 )
 
-                if model.installed:
-                    status = "installed"
+                return
+
+            models = sorted(
+                self.jarvis.models_for_provider(
+                    provider_id
+                ),
+                key=lambda model: (
+                    model.display_name.lower()
+                ),
+            )
+
+            if not models:
+                self.main_model_combo.addItem(
+                    "No discovered models — refresh provider"
+                )
+
+                self.main_model_combo.setEnabled(
+                    False
+                )
+
+                self.main_model_help.setText(
+                    "No models are currently known for this "
+                    "provider. Configure it if necessary and "
+                    "press Refresh Provider."
+                )
+
+                return
+
+            self.main_model_combo.setEnabled(
+                True
+            )
+
+            current_model_id: (
+                str
+                | None
+            ) = None
+
+            if (
+                current is not None
+                and current.provider_id
+                == provider_id
+            ):
+                current_model_id = (
+                    current.model_id
+                )
+
+            known_ids: set[str] = set()
+
+            for model in models:
+                known_ids.add(
+                    model.model_id
+                )
+
+                location = (
+                    model.location.value
+                )
+
+                if location == "local":
+                    if model.installed:
+                        state = "installed"
+                    else:
+                        state = "known"
+
                 else:
-                    status = "not verified"
+                    state = "discovered"
 
                 display = (
-                    f"{model.display_name}  "
-                    f"— {model.provider_id} "
-                    f"({status})"
+                    f"{model.display_name} "
+                    f"— {location}, {state}"
                 )
 
                 self.main_model_combo.addItem(
                     display,
-                    key,
+                    model.model_id,
                 )
 
             if (
-                current is not None
-                and current_key not in known_keys
+                current_model_id is not None
+                and current_model_id
+                not in known_ids
             ):
                 self.main_model_combo.addItem(
                     (
-                        f"{current.model_id} — "
-                        f"{current.provider_id} "
-                        "(currently selected, not detected)"
+                        f"{current_model_id} "
+                        "— currently selected"
                     ),
-                    current_key,
+                    current_model_id,
                 )
 
-            if current_key is not None:
+            if current_model_id is not None:
                 self._select_combo_value(
                     self.main_model_combo,
-                    current_key,
+                    current_model_id,
                 )
+
+            provider_name = (
+                self._provider_display_name(
+                    provider_id
+                )
+            )
+
+            self.main_model_help.setText(
+                "Selecting a model here changes JARVIS's "
+                "active Native MAIN model immediately. "
+                f"Current provider: {provider_name}."
+            )
 
         finally:
             self.main_model_combo.blockSignals(
                 False
             )
 
-    def _update_local_models_text(
+    def _update_provider_details(
         self,
     ) -> None:
-        models = self.jarvis.models_for_provider(
-            "ollama"
+        provider_id = (
+            self._selected_provider_id()
         )
 
-        if not models:
-            self.local_models_label.setText(
-                "No local Ollama models are currently known. "
-                "Start Ollama and press Refresh Ollama."
+        if provider_id is None:
+            self.provider_detail_label.setText(
+                "No provider selected."
             )
 
             return
 
-        lines: list[str] = []
+        provider = None
 
-        for model in models:
-            if model.installed:
-                status = "Installed ✓"
-            else:
-                status = "Configured · not verified"
+        for candidate in (
+            self.jarvis.model_providers()
+        ):
+            if (
+                candidate.provider_id
+                == provider_id
+            ):
+                provider = candidate
+                break
 
-            lines.append(
-                f"{model.display_name}    {status}"
+        if provider is None:
+            self.provider_detail_label.setText(
+                "Provider metadata is unavailable."
             )
 
-        self.local_models_label.setText(
+            return
+
+        models = (
+            self.jarvis.models_for_provider(
+                provider_id
+            )
+        )
+
+        auth_text = (
+            "API key required"
+            if provider.requires_api_key
+            else "No API key required"
+        )
+
+        compatibility = (
+            "OpenAI-compatible"
+            if provider.openai_compatible
+            else "Native JARVIS adapter"
+        )
+
+        status = (
+            self._provider_status.get(
+                provider_id,
+                "Not checked this session",
+            )
+        )
+
+        self.provider_detail_label.setText(
+            f"{provider.display_name} · "
+            f"{provider.location.value} · "
+            f"{auth_text} · "
+            f"{compatibility} · "
+            f"{len(models)} known model(s) · "
+            f"{status}"
+        )
+
+    def _update_provider_catalog(
+        self,
+    ) -> None:
+        lines: list[str] = []
+
+        providers = sorted(
+            self.jarvis.model_providers(),
+            key=lambda provider: (
+                provider.display_name.lower()
+            ),
+        )
+
+        for provider in providers:
+            models = (
+                self.jarvis.models_for_provider(
+                    provider.provider_id
+                )
+            )
+
+            status = (
+                self._provider_status.get(
+                    provider.provider_id,
+                    "Not checked",
+                )
+            )
+
+            lines.append(
+
+                    f"{provider.display_name} · "
+                    f"{provider.location.value} · "
+                    f"{len(models)} model(s) · "
+                    f"{status}"
+
+            )
+
+        lines.append(
+            ""
+        )
+
+        lines.append(
+            "Hermes / Codex is an agent-runtime path and "
+            "remains separate from the Native provider list."
+        )
+
+        self.provider_catalog_label.setText(
             "\n".join(
                 lines
             )
@@ -677,7 +1121,9 @@ class ModelsPage(QWidget):
         if self._updating_ui:
             return
 
-        raw_mode = self.mode_combo.currentData()
+        raw_mode = (
+            self.mode_combo.currentData()
+        )
 
         if not isinstance(
             raw_mode,
@@ -689,12 +1135,27 @@ class ModelsPage(QWidget):
             raw_mode
         )
 
-        self.jarvis.set_runtime_mode(
-            mode
-        )
+        try:
+            self.jarvis.set_runtime_mode(
+                mode
+            )
+
+        except (
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            self.status_label.setText(
+                "Could not change AI mode: "
+                f"{exc}"
+            )
+
+            self._sync_from_runtime()
+
+            return
 
         self.status_label.setText(
-            f"AI mode preference saved: {mode.value}."
+            "AI mode saved: "
+            f"{mode.value}."
         )
 
         self.runtime_changed.emit()
@@ -706,7 +1167,9 @@ class ModelsPage(QWidget):
         if self._updating_ui:
             return
 
-        raw_engine = self.agent_combo.currentData()
+        raw_engine = (
+            self.agent_combo.currentData()
+        )
 
         if not isinstance(
             raw_engine,
@@ -718,27 +1181,62 @@ class ModelsPage(QWidget):
             raw_engine
         )
 
-        if engine is AgentEngineId.HERMES:
+        try:
+            self.jarvis.set_agent_engine(
+                engine
+            )
+
+        except (
+            RuntimeError,
+            ValueError,
+        ) as exc:
             self.status_label.setText(
-                "Hermes is visible in the architecture, but "
-                "its runtime adapter is not connected yet. "
-                "JARVIS remains on the current agent engine."
+                "Could not switch agent engine: "
+                f"{exc}"
             )
 
             self._sync_from_runtime()
 
             return
 
-        self.jarvis.set_agent_engine(
-            engine
-        )
+        if engine is AgentEngineId.HERMES:
+            message = (
+                "Hermes activated. Agentic Windows actions "
+                "continue through JARVIS's trusted MCP tools "
+                "and permission system."
+            )
+
+        elif engine is AgentEngineId.NATIVE:
+            message = (
+                "Native JARVIS activated."
+            )
+
+        else:
+            message = (
+                "Auto agent mode activated."
+            )
 
         self.status_label.setText(
-            "Agent engine preference saved: "
-            f"{engine.value}."
+            message
         )
 
         self.runtime_changed.emit()
+
+    def _on_provider_changed(
+        self,
+        _index: int,
+    ) -> None:
+        if self._updating_ui:
+            return
+
+        self._updating_ui = True
+
+        try:
+            self._populate_main_models()
+            self._update_provider_details()
+
+        finally:
+            self._updating_ui = False
 
     def _on_main_model_changed(
         self,
@@ -747,26 +1245,23 @@ class ModelsPage(QWidget):
         if self._updating_ui:
             return
 
-        raw_key = self.main_model_combo.currentData()
-
-        if not isinstance(
-            raw_key,
-            str,
-        ):
-            return
-
-        parsed = self._parse_model_key(
-            raw_key
+        provider_id = (
+            self._selected_provider_id()
         )
 
-        if parsed is None:
-            self.status_label.setText(
-                "Could not understand the selected model."
+        model_id = (
+            self.main_model_combo.currentData()
+        )
+
+        if (
+            provider_id is None
+            or not isinstance(
+                model_id,
+                str,
             )
-
+            or not model_id
+        ):
             return
-
-        provider_id, model_id = parsed
 
         try:
             self.jarvis.set_model_for_role(
@@ -781,108 +1276,247 @@ class ModelsPage(QWidget):
             ValueError,
         ) as exc:
             self.status_label.setText(
-                f"Could not switch model: {exc}"
+                "Could not switch MAIN model: "
+                f"{exc}"
             )
 
             self._sync_from_runtime()
 
             return
 
-        self.status_label.setText(
-            "Main model switched to "
-            f"{provider_id} / {model_id}."
+        provider_name = (
+            self._provider_display_name(
+                provider_id
+            )
         )
+
+        self.status_label.setText(
+            "MAIN model switched to "
+            f"{provider_name} / {model_id}."
+        )
+
+        self._update_provider_details()
 
         self.runtime_changed.emit()
 
-    def _refresh_ollama(
+    def _refresh_selected_provider(
         self,
     ) -> None:
-        self.refresh_button.setEnabled(
-            False
+        provider_id = (
+            self._selected_provider_id()
         )
 
-        self.status_label.setText(
-            "Checking local Ollama models..."
-        )
-
-        try:
-            models = self.jarvis.refresh_models(
-                "ollama"
-            )
-
-        except (
-            RuntimeError,
-            TypeError,
-            ValueError,
-        ) as exc:
+        if provider_id is None:
             self.status_label.setText(
-                "Could not reach Ollama. "
-                f"{exc}"
+                "No provider selected."
             )
 
             return
 
-        finally:
-            self.refresh_button.setEnabled(
-                True
+        self.refresh_provider_button.setEnabled(
+            False
+        )
+
+        self.refresh_all_button.setEnabled(
+            False
+        )
+
+        provider_name = (
+            self._provider_display_name(
+                provider_id
             )
-
-        self._sync_from_runtime()
-
-        count = len(
-            models
         )
 
         self.status_label.setText(
-            f"Ollama refresh complete. "
-            f"{count} installed model(s) found."
+            "Checking "
+            f"{provider_name}..."
+        )
+
+        try:
+            models = (
+                self.jarvis.refresh_models(
+                    provider_id
+                )
+            )
+
+        except (
+            KeyError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            self._provider_status[
+                provider_id
+            ] = (
+                "Unavailable or not configured"
+            )
+
+            self.status_label.setText(
+                f"{provider_name}: {exc}"
+            )
+
+        else:
+            count = len(
+                models
+            )
+
+            self._provider_status[
+                provider_id
+            ] = (
+                f"Available — {count} model(s)"
+            )
+
+            self.status_label.setText(
+                f"{provider_name} refresh complete. "
+                f"{count} model(s) discovered."
+            )
+
+        finally:
+            self.refresh_provider_button.setEnabled(
+                True
+            )
+
+            self.refresh_all_button.setEnabled(
+                True
+            )
+
+        self._updating_ui = True
+
+        try:
+            self._populate_main_models()
+            self._update_provider_details()
+            self._update_provider_catalog()
+
+        finally:
+            self._updating_ui = False
+
+    def _refresh_all_providers(
+        self,
+    ) -> None:
+        self.refresh_provider_button.setEnabled(
+            False
+        )
+
+        self.refresh_all_button.setEnabled(
+            False
+        )
+
+        self.status_label.setText(
+            "Refreshing model providers..."
+        )
+
+        success_count = 0
+        failure_count = 0
+        discovered_count = 0
+
+        providers = (
+            self.jarvis.model_providers()
+        )
+
+        for provider in providers:
+            try:
+                models = (
+                    self.jarvis.refresh_models(
+                        provider.provider_id
+                    )
+                )
+
+            except (
+                KeyError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ):
+                failure_count += 1
+
+                self._provider_status[
+                    provider.provider_id
+                ] = (
+                    "Unavailable or not configured"
+                )
+
+                continue
+
+            count = len(
+                models
+            )
+
+            success_count += 1
+            discovered_count += count
+
+            self._provider_status[
+                provider.provider_id
+            ] = (
+                f"Available — {count} model(s)"
+            )
+
+        self.refresh_provider_button.setEnabled(
+            True
+        )
+
+        self.refresh_all_button.setEnabled(
+            True
+        )
+
+        self._updating_ui = True
+
+        try:
+            self._populate_main_models()
+            self._update_provider_details()
+            self._update_provider_catalog()
+
+        finally:
+            self._updating_ui = False
+
+        self.status_label.setText(
+            "Provider refresh finished. "
+            f"{success_count} available, "
+            f"{failure_count} unavailable/not configured, "
+            f"{discovered_count} model(s) discovered."
         )
 
     # =================================================
     # HELPERS
     # =================================================
 
-    @staticmethod
-    def _model_key(
-        provider_id: str,
-        model_id: str,
-    ) -> str:
-        """
-        Use a separator that normal Ollama model IDs do not
-        require us to parse around.
-        """
-
-        return (
-            f"{provider_id}\0"
-            f"{model_id}"
+    def _selected_provider_id(
+        self,
+    ) -> str | None:
+        provider_id = (
+            self.provider_combo.currentData()
         )
 
-    @staticmethod
-    def _parse_model_key(
-        key: str,
-    ) -> tuple[
-        str,
-        str,
-    ] | None:
-        if "\0" not in key:
-            return None
-
-        provider_id, model_id = key.split(
-            "\0",
-            1,
-        )
-
-        if (
-            not provider_id
-            or not model_id
+        if not isinstance(
+            provider_id,
+            str,
         ):
             return None
 
-        return (
-            provider_id,
-            model_id,
+        provider_id = (
+            provider_id.strip()
         )
+
+        if not provider_id:
+            return None
+
+        return provider_id
+
+    def _provider_display_name(
+        self,
+        provider_id: str,
+    ) -> str:
+        for provider in (
+            self.jarvis.model_providers()
+        ):
+            if (
+                provider.provider_id
+                == provider_id
+            ):
+                return (
+                    provider.display_name
+                )
+
+        return provider_id
 
     @staticmethod
     def _select_combo_value(

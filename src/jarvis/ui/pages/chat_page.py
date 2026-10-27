@@ -8,6 +8,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -200,7 +201,7 @@ class ChatPage(QWidget):
         )
 
         subtitle = QLabel(
-            "Talk to JARVIS using the local AI agent."
+            "Hermes is the talking brain. Local trusted tools are the hands."
         )
 
         subtitle.setObjectName(
@@ -209,6 +210,10 @@ class ChatPage(QWidget):
 
         layout.addWidget(
             subtitle
+        )
+
+        self._build_command_center(
+            layout
         )
 
         # =================================================
@@ -295,6 +300,123 @@ class ChatPage(QWidget):
         )
 
         self.input_box.setFocus()
+
+    def _build_command_center(
+        self,
+        layout: QVBoxLayout,
+    ) -> None:
+        """
+        Add visible one-click command-center actions.
+        """
+
+        panel = QWidget()
+
+        panel.setObjectName(
+            "commandCenterPanel"
+        )
+
+        panel_layout = QVBoxLayout(
+            panel
+        )
+
+        panel_layout.setContentsMargins(
+            12,
+            12,
+            12,
+            12,
+        )
+
+        panel_layout.setSpacing(
+            10
+        )
+
+        heading = QLabel(
+            "Command Center"
+        )
+
+        heading.setObjectName(
+            "sectionHeading"
+        )
+
+        panel_layout.addWidget(
+            heading
+        )
+
+        grid = QGridLayout()
+
+        grid.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
+        grid.setSpacing(
+            8
+        )
+
+        actions = [
+            (
+                "Mission",
+                "command center",
+            ),
+            (
+                "Status",
+                "jarvis status",
+            ),
+            (
+                "Brief",
+                "daily brief",
+            ),
+            (
+                "Can Do",
+                "what can you do",
+            ),
+            (
+                "Roadmap",
+                "assistant plan",
+            ),
+            (
+                "Desktop Note",
+                "create a file in my desktop and say hi in there",
+            ),
+        ]
+
+        for index, (
+            label,
+            prompt,
+        ) in enumerate(
+            actions
+        ):
+            button = QPushButton(
+                label
+            )
+
+            button.setObjectName(
+                "quickActionButton"
+            )
+
+            button.clicked.connect(
+                lambda checked=False, value=prompt: (
+                    self._send_quick_prompt(
+                        value
+                    )
+                )
+            )
+
+            grid.addWidget(
+                button,
+                index // 3,
+                index % 3,
+            )
+
+        panel_layout.addLayout(
+            grid
+        )
+
+        layout.addWidget(
+            panel
+        )
 
     def _send_message(self) -> None:
         """
@@ -385,6 +507,23 @@ class ChatPage(QWidget):
         )
 
         thread.start()
+
+    def _send_quick_prompt(
+        self,
+        prompt: str,
+    ) -> None:
+        """
+        Send a predefined command-center prompt.
+        """
+
+        if self.request_in_progress:
+            return
+
+        self.input_box.setText(
+            prompt
+        )
+
+        self._send_message()
 
     def _handle_confirmation_request(
         self,
@@ -593,6 +732,8 @@ class ChatPage(QWidget):
             False
         )
 
+        self._show_latest_telemetry()
+
     def _handle_error(
         self,
         error: str,
@@ -609,6 +750,8 @@ class ChatPage(QWidget):
         self._set_busy(
             False
         )
+
+        self._show_latest_telemetry()
 
     def _set_busy(
         self,
@@ -642,6 +785,25 @@ class ChatPage(QWidget):
 
         self.busy_changed.emit(
             busy
+        )
+
+    def _show_latest_telemetry(
+        self,
+    ) -> None:
+        """
+        Show the latest execution route and latency.
+        """
+
+        telemetry = (
+            self.jarvis
+            .last_execution_telemetry()
+        )
+
+        if telemetry is None:
+            return
+
+        self.status_label.setText(
+            telemetry.summary()
         )
 
     def start_new_conversation(

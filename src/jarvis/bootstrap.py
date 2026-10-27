@@ -1,5 +1,7 @@
+from jarvis.core.action_memory import ActionMemory
 from jarvis.core.application import JarvisApplication
 from jarvis.core.config import JarvisSettings
+from jarvis.core.personal_memory import PersonalMemory
 from jarvis.models.base import ModelProvider
 from jarvis.models.catalog import (
     ModelCatalog,
@@ -9,6 +11,8 @@ from jarvis.models.catalog import (
 )
 from jarvis.models.ollama import OllamaProvider
 from jarvis.models.ollama_discovery import OllamaDiscoveryService
+from jarvis.models.openai_compatible import OpenAICompatibleProvider
+from jarvis.models.provider_hub import register_provider_hub
 from jarvis.models.provider_registry import ProviderRegistry
 from jarvis.runtime.model_manager import ModelManager
 from jarvis.runtime.profile import (
@@ -44,6 +48,7 @@ from jarvis.tools.list_filesystem_scopes import ListFilesystemScopesTool
 from jarvis.tools.list_open_windows import ListOpenWindowsTool
 from jarvis.tools.list_ui_elements import ListUiElementsTool
 from jarvis.tools.open_application import OpenApplicationTool
+from jarvis.tools.open_url import OpenUrlTool
 from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.service import ToolService
@@ -87,6 +92,10 @@ def build_model_manager(
 
     catalog = ModelCatalog()
 
+    # -------------------------------------------------
+    # OLLAMA
+    # -------------------------------------------------
+
     catalog.register_provider(
         ProviderDefinition(
             provider_id="ollama",
@@ -113,6 +122,24 @@ def build_model_manager(
         ),
     )
 
+    # -------------------------------------------------
+    # UNIVERSAL PROVIDER HUB
+    # -------------------------------------------------
+    #
+    # This registers provider metadata for JARVIS's
+    # OpenAI-compatible providers.
+    #
+    # Runtime factories and discovery services are enabled
+    # only when the corresponding provider is configured.
+    #
+    # No network request happens here.
+
+    universal_discovery_services = register_provider_hub(
+        settings=settings,
+        catalog=catalog,
+        provider_registry=provider_registry,
+    )
+
     # =================================================
     # RUNTIME PROFILE
     # =================================================
@@ -130,22 +157,33 @@ def build_model_manager(
     else:
         profile = RuntimeProfile()
 
+    if settings.openai_api_key:
+        openai_models = {settings.openai_model}
+        openai_models.update(s.model_id for s in profile.models.values() if s.provider_id == "openai")
+        for model_id in openai_models:
+            catalog.register_model(ModelDefinition(
+                provider_id="openai", model_id=model_id, display_name=model_id,
+                location=ModelLocation.CLOUD, supports_tools=True,
+            ))
+
     # =================================================
     # BOOTSTRAP KNOWN MODELS
     # =================================================
 
-    # The .env/default Ollama model must be known before any
+    # The .env/default Ollama model must be known before
     # live discovery happens so JARVIS can always start with
     # its configured fallback.
+
     known_ollama_models: set[str] = {
         settings.ollama_model,
     }
 
-    # Also preserve Ollama models referenced by an existing
+    # Preserve Ollama models referenced by an existing
     # runtime profile.
     #
     # Live Ollama discovery later confirms what is currently
     # installed and replaces this provider's catalog entries.
+
     for selection in profile.models.values():
         if selection.provider_id == "ollama":
             known_ollama_models.add(
@@ -166,10 +204,12 @@ def build_model_manager(
                 #
                 # refresh_models("ollama") obtains the real
                 # installed list from Ollama.
+
                 installed=False,
                 installable=True,
 
                 # Capability probing is a separate concern.
+
                 supports_tools=False,
                 supports_reasoning=False,
                 supports_streaming=True,
@@ -191,6 +231,7 @@ def build_model_manager(
         profile_store=profile_store,
         discovery_services=(
             ollama_discovery,
+            *universal_discovery_services,
         ),
     )
 
@@ -202,9 +243,12 @@ def build_model_manager(
         ModelRole.MAIN
     )
 
-    # Existing profiles from future/experimental providers must
-    # not prevent JARVIS from starting when that provider is not
-    # currently registered.
+    # Existing profiles from experimental or currently
+    # unavailable providers must not prevent JARVIS from
+    # starting.
+    #
+    # Ollama remains the safe local fallback.
+
     if (
         main_selection is None
         or not provider_registry.contains(
@@ -228,7 +272,7 @@ def build_model_provider(
 
     Kept as a public bootstrap helper for compatibility.
 
-    Provider selection now goes through ModelManager instead of
+    Provider selection goes through ModelManager instead of
     provider-specific branching.
     """
 
@@ -283,6 +327,9 @@ def build_application(
         Capability.OPEN_APPLICATION:
             PermissionMode.ASK,
 
+        Capability.USE_BROWSER:
+            PermissionMode.ASK,
+
         Capability.CONTROL_APPLICATION:
             PermissionMode.ASK,
 
@@ -306,7 +353,10 @@ def build_application(
     # PERSISTED PERMISSION MODES
     # =================================================
 
-    permission_mode_store: PermissionModeStore | None = None
+    permission_mode_store: (
+        PermissionModeStore
+        | None
+    ) = None
 
     persisted_modes: dict[
         Capability,
@@ -319,7 +369,9 @@ def build_application(
             / "permission_modes.json"
         )
 
-        persisted_modes = permission_mode_store.load()
+        persisted_modes = (
+            permission_mode_store.load()
+        )
 
     permission_modes: dict[
         Capability,
@@ -338,10 +390,17 @@ def build_application(
         Capability
     ] = set()
 
-    for capability, mode in permission_modes.items():
-        decision = mode.to_decision()
+    for capability, mode in (
+        permission_modes.items()
+    ):
+        decision = (
+            mode.to_decision()
+        )
 
-        if decision is PermissionDecision.ALLOW:
+        if (
+            decision
+            is PermissionDecision.ALLOW
+        ):
             allowed_capabilities.add(
                 capability
             )
@@ -356,52 +415,77 @@ def build_application(
 
     permission_policy = PermissionPolicy(
         allowed=allowed_capabilities,
-        require_confirmation=confirmation_capabilities,
+        require_confirmation=(
+            confirmation_capabilities
+        ),
     )
 
     # =================================================
     # FILESYSTEM SCOPES
     # =================================================
 
-    filesystem_scope_store: FilesystemScopeStore | None = None
+    filesystem_scope_store: (
+        FilesystemScopeStore
+        | None
+    ) = None
 
     persisted_roots = ()
 
     if settings.persist_filesystem_scopes:
-        filesystem_scope_store = FilesystemScopeStore(
-            settings.state_dir
-            / "filesystem_scopes.json"
+        filesystem_scope_store = (
+            FilesystemScopeStore(
+                settings.state_dir
+                / "filesystem_scopes.json"
+            )
         )
 
-        persisted_roots = filesystem_scope_store.load()
+        persisted_roots = (
+            filesystem_scope_store.load()
+        )
 
-    filesystem_scope_policy = FilesystemScopePolicy(
-        settings.workspace_dir,
-        allowed_roots=persisted_roots,
+    filesystem_scope_policy = (
+        FilesystemScopePolicy(
+            settings.workspace_dir,
+            allowed_roots=persisted_roots,
+        )
     )
 
     # =================================================
     # TRUSTED APPLICATION / WINDOW / UI DISCOVERY
     # =================================================
 
-    application_catalog = ApplicationCatalog()
+    application_catalog = (
+        ApplicationCatalog()
+    )
 
-    window_backend = Win32WindowBackend()
+    window_backend = (
+        Win32WindowBackend()
+    )
 
     window_catalog = WindowCatalog(
         window_backend
     )
 
-    close_window_backend = Win32CloseWindowBackend()
+    close_window_backend = (
+        Win32CloseWindowBackend()
+    )
 
-    text_input_backend = Win32TextInputBackend()
+    text_input_backend = (
+        Win32TextInputBackend()
+    )
 
-    keyboard_action_backend = Win32KeyboardActionBackend()
+    keyboard_action_backend = (
+        Win32KeyboardActionBackend()
+    )
 
-    ui_automation_backend = PywinautoUiAutomationBackend()
+    ui_automation_backend = (
+        PywinautoUiAutomationBackend()
+    )
 
-    ui_element_catalog = UiElementCatalog(
-        ui_automation_backend
+    ui_element_catalog = (
+        UiElementCatalog(
+            ui_automation_backend
+        )
     )
 
     # =================================================
@@ -410,7 +494,10 @@ def build_application(
 
     registry = ToolRegistry()
 
-    # Filesystem
+    # -------------------------------------------------
+    # FILESYSTEM
+    # -------------------------------------------------
+
     registry.register(
         ListFilesystemScopesTool(
             filesystem_scope_policy
@@ -420,32 +507,43 @@ def build_application(
     registry.register(
         ReadFileTool(
             settings.workspace_dir,
-            scope_policy=filesystem_scope_policy,
+            scope_policy=(
+                filesystem_scope_policy
+            ),
         )
     )
 
     registry.register(
         ListDirectoryTool(
             settings.workspace_dir,
-            scope_policy=filesystem_scope_policy,
+            scope_policy=(
+                filesystem_scope_policy
+            ),
         )
     )
 
     registry.register(
         WriteFileTool(
             settings.workspace_dir,
-            scope_policy=filesystem_scope_policy,
+            scope_policy=(
+                filesystem_scope_policy
+            ),
         )
     )
 
     registry.register(
         TrashFileTool(
             settings.workspace_dir,
-            scope_policy=filesystem_scope_policy,
+            scope_policy=(
+                filesystem_scope_policy
+            ),
         )
     )
 
-    # Applications
+    # -------------------------------------------------
+    # APPLICATIONS
+    # -------------------------------------------------
+
     registry.register(
         ListApplicationsTool(
             application_catalog
@@ -458,7 +556,18 @@ def build_application(
         )
     )
 
-    # Windows
+    # -------------------------------------------------
+    # BROWSER
+    # -------------------------------------------------
+
+    registry.register(
+        OpenUrlTool()
+    )
+
+    # -------------------------------------------------
+    # WINDOWS
+    # -------------------------------------------------
+
     registry.register(
         ListOpenWindowsTool(
             window_catalog
@@ -474,41 +583,64 @@ def build_application(
     registry.register(
         CloseWindowTool(
             catalog=window_catalog,
-            backend=close_window_backend,
+            backend=(
+                close_window_backend
+            ),
         )
     )
 
-    # Input
+    # -------------------------------------------------
+    # INPUT
+    # -------------------------------------------------
+
     registry.register(
         TypeTextTool(
             catalog=window_catalog,
-            text_backend=text_input_backend,
+            text_backend=(
+                text_input_backend
+            ),
         )
     )
 
     registry.register(
         KeyboardActionTool(
             catalog=window_catalog,
-            keyboard_backend=keyboard_action_backend,
+            keyboard_backend=(
+                keyboard_action_backend
+            ),
         )
     )
 
-    # UI Automation
+    # -------------------------------------------------
+    # UI AUTOMATION
+    # -------------------------------------------------
+
     registry.register(
         ListUiElementsTool(
-            window_catalog=window_catalog,
-            ui_catalog=ui_element_catalog,
+            window_catalog=(
+                window_catalog
+            ),
+            ui_catalog=(
+                ui_element_catalog
+            ),
         )
     )
 
     registry.register(
         ClickUiElementTool(
-            window_catalog=window_catalog,
-            ui_catalog=ui_element_catalog,
+            window_catalog=(
+                window_catalog
+            ),
+            ui_catalog=(
+                ui_element_catalog
+            ),
         )
     )
 
-    # Utilities
+    # -------------------------------------------------
+    # UTILITIES
+    # -------------------------------------------------
+
     registry.register(
         SystemInfoTool()
     )
@@ -534,24 +666,58 @@ def build_application(
     # MODEL RUNTIME
     # =================================================
 
-    model_manager = build_model_manager(
-        settings
+    model_manager = (
+        build_model_manager(
+            settings
+        )
     )
 
-    model_provider = model_manager.build_provider(
-        ModelRole.MAIN
+    model_provider = (
+        model_manager.build_provider(
+            ModelRole.MAIN
+        )
     )
 
     # =================================================
     # APPLICATION
     # =================================================
 
+    action_memory = (
+        ActionMemory.load(
+            settings.state_dir
+            / "action_memory.json"
+        )
+        if settings.persist_action_memory
+        else ActionMemory()
+    )
+
     return JarvisApplication(
         tool_service=tool_service,
         model_provider=model_provider,
         model_manager=model_manager,
-        filesystem_scope_policy=filesystem_scope_policy,
-        filesystem_scope_store=filesystem_scope_store,
-        permission_mode_store=permission_mode_store,
+        action_memory=action_memory,
+        personal_memory=PersonalMemory(
+            settings.state_dir / "personal_memory.sqlite3"
+            if settings.persist_personal_memory else None
+        ),
+        cloud_provider=(
+            model_provider if model_provider.name == "openai" else OpenAICompatibleProvider(
+                provider_name="openai", model=settings.openai_model,
+                base_url=settings.openai_base_url, api_key=settings.openai_api_key,
+            ) if settings.openai_api_key else None
+        ),
+        local_worker_provider=OllamaProvider(
+            model=settings.ollama_model, base_url=settings.ollama_base_url,
+        ),
+        prefer_cloud_reasoning=settings.prefer_cloud_reasoning,
+        filesystem_scope_policy=(
+            filesystem_scope_policy
+        ),
+        filesystem_scope_store=(
+            filesystem_scope_store
+        ),
+        permission_mode_store=(
+            permission_mode_store
+        ),
         permission_modes=permission_modes,
     )

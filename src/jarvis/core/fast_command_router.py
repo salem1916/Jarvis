@@ -1,4 +1,6 @@
 import re
+from typing import ClassVar
+from urllib.parse import urlsplit
 
 from jarvis.core.tool_request import ToolRequest
 
@@ -7,35 +9,15 @@ class FastCommandRouter:
     """
     Deterministic router for extremely simple JARVIS commands.
 
-    The purpose of this router is latency reduction.
+    It converts high-confidence commands directly into trusted
+    ToolRequests without calling an LLM.
 
-    Commands that are simple and unambiguous do not need an
-    LLM just to decide which trusted JARVIS tool should run.
-
-    SECURITY:
-
-    This router does NOT execute anything.
-
-    It only converts a safe, recognized natural-language
-    command into a ToolRequest.
-
-    Execution still goes through:
-
-        ToolService
-            ↓
-        PermissionPolicy
-            ↓
-        ToolExecutor
-            ↓
-        trusted Tool
-
-    If a request is ambiguous or complex, route() returns None
-    and the normal AI agent handles it.
+    It never executes actions itself.
     """
 
-    _OPEN_APPLICATION_PATTERN = re.compile(
+    _OPEN_TARGET_PATTERN = re.compile(
         r"^(?:please\s+)?"
-        r"(?:open|launch)\s+"
+        r"(?:open|launch|visit|browse(?:\s+to)?|go\s+to)\s+"
         r"(.+?)"
         r"(?:\s+please)?"
         r"[.!]?$",
@@ -66,26 +48,32 @@ class FastCommandRouter:
         " while ",
     )
 
-    _FILESYSTEM_WORDS = (
-        " file",
-        " files",
-        " folder",
-        " folders",
-        " directory",
-        " directories",
-        " path",
-        " document",
-    )
+    _WEBSITE_ALIASES: ClassVar[
+        dict[
+            str,
+            str,
+        ]
+    ] = {
+        "facebook": "https://www.facebook.com/",
+        "instagram": "https://www.instagram.com/",
+        "youtube": "https://www.youtube.com/",
+        "google": "https://www.google.com/",
+        "github": "https://github.com/",
+        "reddit": "https://www.reddit.com/",
+        "linkedin": "https://www.linkedin.com/",
+        "x": "https://x.com/",
+        "twitter": "https://x.com/",
+    }
 
     def route(
         self,
         prompt: str,
     ) -> ToolRequest | None:
         """
-        Convert one simple command into a trusted structured
-        ToolRequest.
+        Convert one simple command into a trusted ToolRequest.
 
-        Return None when AI reasoning is more appropriate.
+        Ambiguous or complex requests return None and continue
+        through the normal AI routing system.
         """
 
         normalized = " ".join(
@@ -99,123 +87,235 @@ class FastCommandRouter:
 
         lowered = normalized.casefold()
 
+        # Polite requests for one explicit action still use the zero-model path.
+        polite = re.match(
+            r"^(?:can|could|would) you (?:please )?((?:open|launch|visit|browse|go to)\s+.+)$",
+            normalized, re.IGNORECASE,
+        )
+        if polite:
+            normalized = polite[1]
+            lowered = normalized.casefold()
+
         if lowered.startswith(
             self._INFORMATIONAL_PREFIXES
         ):
             return None
 
-        request = self._route_open_application(
+        return self._route_open_target(
             normalized
         )
 
-        if request is not None:
-            return request
-
-        return None
-
-    def _route_open_application(
+    def _route_open_target(
         self,
         prompt: str,
     ) -> ToolRequest | None:
         """
-        Recognize only an unambiguous request to launch one
-        application.
+        Route either a website or an installed application.
 
-        Examples:
+        Known websites are handled before applications.
 
-            Open Spotify
-            Launch Discord
-            Please open Calculator
-
-        Requests such as:
-
-            Open Spotify and play music
-            Open notes.txt
-            How do I open Spotify?
-
-        intentionally fall back to the normal agent.
+        Obvious file and folder targets are rejected before
+        generic domain detection so names such as notes.txt
+        cannot be mistaken for websites.
         """
 
-        match = self._OPEN_APPLICATION_PATTERN.fullmatch(
-            prompt
+        match = (
+            self._OPEN_TARGET_PATTERN.fullmatch(
+                prompt
+            )
         )
 
         if match is None:
             return None
 
-        application = match.group(
+        target = match.group(
             1
         ).strip()
 
-        if not application:
+        if not target:
             return None
 
-        lowered_application = application.casefold()
+        lowered_target = (
+            target.casefold()
+        )
 
-        # ---------------------------------------------
-        # MULTI-STEP / COMPLEX REQUEST
-        # ---------------------------------------------
+        # =================================================
+        # COMPLEX / MULTI-STEP REQUEST
+        # =================================================
 
         if any(
-            word in f" {lowered_application} "
+            word in f" {lowered_target} "
             for word in self._CHAIN_WORDS
         ):
             return None
 
-        # ---------------------------------------------
-        # FILESYSTEM-LIKE REQUEST
-        # ---------------------------------------------
-
-        if self._looks_like_filesystem_target(
-            lowered_application
-        ):
+        if len(target) > 2048:
             return None
 
-        # ---------------------------------------------
-        # SMALL INPUT SAFETY BOUNDARY
-        # ---------------------------------------------
+        # =================================================
+        # FRIENDLY "THE" PREFIX
+        # =================================================
 
-        if len(application) > 100:
-            return None
-
-        # Friendly names such as:
-        #
-        #     "the Spotify"
-        #
-        # are normalized to:
-        #
-        #     "Spotify"
-
-        if lowered_application.startswith(
+        if lowered_target.startswith(
             "the "
         ):
-            application = application[
+            target = target[
                 4:
             ].strip()
 
-        if not application:
+            lowered_target = (
+                target.casefold()
+            )
+
+        if not target:
+            return None
+
+        # =================================================
+        # KNOWN WEBSITE ALIASES
+        # =================================================
+
+        known_url = (
+            self._WEBSITE_ALIASES.get(
+                lowered_target
+            )
+        )
+
+        if known_url is not None:
+            return ToolRequest(
+                tool_name="open_url",
+                arguments={
+                    "url": known_url,
+                },
+            )
+
+        # =================================================
+        # FILESYSTEM TARGET
+        # =================================================
+        #
+        # IMPORTANT:
+        #
+        # This check must happen BEFORE generic domain
+        # recognition.
+        #
+        # Otherwise:
+        #
+        #     notes.txt
+        #
+        # could incorrectly become:
+        #
+        #     https://notes.txt
+        # =================================================
+
+        if self._looks_like_filesystem_target(
+            lowered_target
+        ):
+            return None
+
+        # =================================================
+        # EXPLICIT / DOMAIN URL
+        # =================================================
+
+        explicit_url = (
+            self._normalize_explicit_url(
+                target
+            )
+        )
+
+        if explicit_url is not None:
+            return ToolRequest(
+                tool_name="open_url",
+                arguments={
+                    "url": explicit_url,
+                },
+            )
+
+        # =================================================
+        # INSTALLED APPLICATION
+        # =================================================
+
+        if len(target) > 100:
             return None
 
         return ToolRequest(
             tool_name="open_application",
             arguments={
-                "application": application,
+                "application": target,
             },
         )
+
+    @staticmethod
+    def _normalize_explicit_url(
+        target: str,
+    ) -> str | None:
+        """
+        Recognize explicit safe web addresses.
+
+        Supported:
+
+            https://example.com
+            http://example.com
+            example.com
+            www.example.com
+
+        OpenUrlTool performs the final security validation.
+        """
+
+        lowered = (
+            target.casefold()
+        )
+
+        if lowered.startswith(
+            (
+                "https://",
+                "http://",
+            )
+        ):
+            parsed = urlsplit(
+                target
+            )
+
+            if parsed.hostname:
+                return target
+
+            return None
+
+        if " " in target:
+            return None
+
+        if "." not in target:
+            return None
+
+        candidate = (
+            f"https://{target}"
+        )
+
+        parsed = urlsplit(
+            candidate
+        )
+
+        hostname = parsed.hostname
+
+        if (
+            hostname is None
+            or "." not in hostname
+        ):
+            return None
+
+        return candidate
 
     @staticmethod
     def _looks_like_filesystem_target(
         target: str,
     ) -> bool:
         """
-        Avoid routing obvious file/folder requests through the
-        application launcher.
+        Detect obvious file/folder targets.
+
+        Common file extensions are treated as filesystem targets
+        while normal domains such as example.com remain eligible
+        for URL routing.
         """
 
         if "\\" in target:
-            return True
-
-        if "/" in target:
             return True
 
         filesystem_words = (
@@ -241,17 +341,14 @@ class FastCommandRouter:
         ):
             return True
 
-        # Obvious filename extension:
-        #
-        #     notes.txt
-        #     report.pdf
-        #
-        # Application names containing periods can still fall
-        # back safely to the normal agent.
-
         return bool(
             re.search(
-                r"\.[a-z0-9]{1,8}$",
+                (
+                    r"\.(?:"
+                    r"txt|pdf|doc|docx|xls|xlsx|csv|"
+                    r"json|py|md|zip|rar|7z|exe|msi"
+                    r")$"
+                ),
                 target,
                 re.IGNORECASE,
             )

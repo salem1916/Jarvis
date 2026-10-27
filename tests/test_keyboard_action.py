@@ -177,6 +177,13 @@ def test_keyboard_action_uses_separate_capability(
                 win32con.VK_TAB,
             ),
         ),
+        (
+            "close_tab",
+            (
+                win32con.VK_CONTROL,
+                ord("W"),
+            ),
+        ),
     ],
 )
 def test_keyboard_action_maps_trusted_actions(

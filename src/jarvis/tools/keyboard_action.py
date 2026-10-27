@@ -175,9 +175,9 @@ class KeyboardActionTool(Tool):
         "Perform one predefined keyboard action in a specific "
         "visible Windows window. Supported actions are "
         "select_all, copy, paste, save, undo, redo, enter, "
-        "escape, and tab. JARVIS resolves and focuses the target "
-        "window first. Arbitrary keyboard combinations are not "
-        "supported."
+        "escape, tab, and close_tab. JARVIS resolves and focuses "
+        "the target window first. Arbitrary keyboard combinations "
+        "are not supported."
     )
 
     required_capability = Capability.KEYBOARD_ACTION
@@ -206,6 +206,7 @@ class KeyboardActionTool(Tool):
                     "enter",
                     "escape",
                     "tab",
+                    "close_tab",
                 ],
                 "description": (
                     "Trusted keyboard action to perform."
@@ -275,6 +276,11 @@ class KeyboardActionTool(Tool):
 
         "tab": (
             win32con.VK_TAB,
+        ),
+
+        "close_tab": (
+            win32con.VK_CONTROL,
+            ord("W"),
         ),
     }
 

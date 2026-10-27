@@ -5,15 +5,13 @@ import pytest
 from jarvis.bootstrap import build_application
 from jarvis.core.config import JarvisSettings
 from jarvis.core.tool_request import ToolRequest
-from jarvis.runtime.profile import (
-    ModelRole,
-)
+from jarvis.runtime.profile import ModelRole
 from jarvis.tools.executor import PermissionDeniedError
 
 
 def test_application_reads_file_when_permission_is_enabled(
     tmp_path: Path,
-):
+) -> None:
     file_path = tmp_path / "hello.txt"
     file_path.write_text(
         "Hello Salem",
@@ -32,7 +30,7 @@ def test_application_reads_file_when_permission_is_enabled(
     request = ToolRequest(
         tool_name="read_file",
         arguments={
-            "path": "hello.txt"
+            "path": "hello.txt",
         },
     )
 
@@ -45,7 +43,7 @@ def test_application_reads_file_when_permission_is_enabled(
 
 def test_application_blocks_file_read_by_default(
     tmp_path: Path,
-):
+) -> None:
     file_path = tmp_path / "hello.txt"
     file_path.write_text(
         "Secret",
@@ -64,7 +62,7 @@ def test_application_blocks_file_read_by_default(
     request = ToolRequest(
         tool_name="read_file",
         arguments={
-            "path": "hello.txt"
+            "path": "hello.txt",
         },
     )
 
@@ -106,12 +104,19 @@ def test_application_bootstraps_main_model_without_network(
 
     providers = app.model_providers()
 
-    assert [
+    provider_ids = {
         provider.provider_id
         for provider in providers
-    ] == [
-        "ollama"
-    ]
+    }
+
+    assert provider_ids == {
+        "openai",
+        "ollama",
+        "openrouter",
+        "groq",
+        "xai",
+        "lm_studio",
+    }
 
     models = app.available_models()
 

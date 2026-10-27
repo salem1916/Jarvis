@@ -21,9 +21,11 @@ from jarvis.core.config import (
 from jarvis.core.system_prompt import build_system_prompt
 from jarvis.runtime.profile import ModelRole
 from jarvis.ui.pages.chat_page import ChatPage
+from jarvis.ui.pages.memory_page import MemoryPage
 from jarvis.ui.pages.models_page import ModelsPage
 from jarvis.ui.pages.permissions_page import PermissionsPage
 from jarvis.ui.pages.placeholder_page import PlaceholderPage
+from jarvis.ui.pages.tasks_page import TasksPage
 from jarvis.ui.theme import APP_STYLESHEET
 
 
@@ -238,7 +240,7 @@ class JarvisWindow(QMainWindow):
 
         self._add_navigation_button(
             sidebar_layout,
-            "Settings",
+            "Memory",
             self.SETTINGS_PAGE,
         )
 
@@ -389,14 +391,7 @@ class JarvisWindow(QMainWindow):
             system_prompt=self.system_prompt,
         )
 
-        self.tasks_page = PlaceholderPage(
-            title="Tasks",
-            description=(
-                "Persistent and background tasks will "
-                "appear here once the JARVIS task engine "
-                "is implemented."
-            ),
-        )
+        self.tasks_page = TasksPage(self.jarvis)
 
         self.permissions_page = PermissionsPage(
             jarvis=self.jarvis,
@@ -406,13 +401,7 @@ class JarvisWindow(QMainWindow):
             jarvis=self.jarvis,
         )
 
-        self.settings_page = PlaceholderPage(
-            title="Settings",
-            description=(
-                "General JARVIS configuration will be "
-                "managed here."
-            ),
-        )
+        self.settings_page = MemoryPage(self.jarvis)
 
         self.logs_page = PlaceholderPage(
             title="Logs",
@@ -463,6 +452,7 @@ class JarvisWindow(QMainWindow):
         self.chat_page.busy_changed.connect(
             self._set_request_busy
         )
+        self.chat_page.busy_changed.connect(self.settings_page.setDisabled)
 
         self.models_page.runtime_changed.connect(
             self._refresh_runtime_sidebar
@@ -616,9 +606,9 @@ class JarvisWindow(QMainWindow):
         Proper cancellation comes later.
         """
 
-        if self.chat_page.request_in_progress:
+        if self.chat_page.request_in_progress or self.jarvis.agent_team.has_active_jobs():
             self.chat_page.status_label.setText(
-                "Wait for the current request to finish "
+                "Wait for the current chat and agent tasks to finish "
                 "before closing JARVIS."
             )
 
@@ -630,6 +620,9 @@ class JarvisWindow(QMainWindow):
 
             return
 
+        self.tasks_page.timer.stop()
+        self.settings_page.timer.stop()
+        self.jarvis.shutdown()
         event.accept()
 
 
