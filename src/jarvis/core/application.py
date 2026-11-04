@@ -2649,8 +2649,12 @@ class JarvisApplication:
         self._last_execution_telemetry = None
         self._last_route_decision = None
         browser_url = ""
+        system_browser = False
         if "browser_mcp" in self.tool_service.registry.names():
-            browser_url = str(getattr(self.tool_service.registry.get("browser_mcp"), "last", {}).get("url", ""))
+            browser = self.tool_service.registry.get("browser_mcp")
+            system_browser = getattr(getattr(browser, "client", None), "mode", "") == "system"
+            if not system_browser:
+                browser_url = str(getattr(browser, "last", {}).get("url", ""))
         role = re.match(r"^(@(?:local|chatgpt|hermes|plan|groq|gemini|free))\s+(.+)$", prompt.strip(), re.IGNORECASE | re.DOTALL)
         utterance = role[2] if role else prompt
         from jarvis.core.browser_navigation import same_tab_url
@@ -2666,8 +2670,11 @@ class JarvisApplication:
                 elif browser_url and navigation_reference(utterance):
                     prepared = PreparedTurn("browser: " + utterance, kind="navigation",
                                             resume_url=self.interaction.focus_url or browser_url)
+                elif system_browser and self.interaction.focus_url and navigation_reference(utterance) and not self.screen_control_enabled:
+                    prepared = PreparedTurn("browser: " + utterance, kind="navigation")
                 elif (task := browser_task(utterance)) is not None:
-                    prepared = PreparedTurn("browser: " + task)
+                    resume = browser_url if browser_url == self.interaction.focus_url and "https://" not in task else ""
+                    prepared = PreparedTurn("browser: " + task, resume_url=resume)
                 elif self.fast_command_router.open_request(utterance) is not None:
                     memory = self.interaction.search_memory
                     memory.pending_engine = memory.pending_request = memory.unresolved_prompt = ""
@@ -2779,7 +2786,8 @@ class JarvisApplication:
         from jarvis.security.policy import PermissionDecision
         from jarvis.tools.screen_observation import ScreenObservationTool
         browser = self.tool_service.registry.get("browser_mcp")
-        if self.interaction.focus_url and getattr(browser,"last",{}).get("url") == self.interaction.focus_url:
+        if (getattr(getattr(browser, "client", None), "mode", "") != "system"
+                and self.interaction.focus_url and getattr(browser,"last",{}).get("url") == self.interaction.focus_url):
             result = self._execute_tool_with_confirmation(ToolRequest(tool_name="browser_mcp",arguments={"action":"navigate","url":url}),confirmation_handler)
             observed_url = str(result.get("url",url)) if isinstance(result,dict) else url
             answer = "Opened " + page_label(observed_url) + " in the current tab."
@@ -3031,6 +3039,8 @@ class JarvisApplication:
             raise TypeError("Screen mode needs a direct vision-capable API or local model. Select one in Settings.")
         use_images = supports_screen_images(engine.provider)
         names = SCREEN_TOOLS.intersection(self.tool_service.registry.names())
+        if getattr(getattr(browser, "client", None), "mode", "") == "system":
+            names.discard("browser_mcp")
         windows_enabled = self.integrations is not None and self.integrations.windows.enabled
         if not windows_enabled:names -= {"windows_snapshot","windows_click","windows_type","windows_scroll"}
         else:names -= {"list_ui_elements","click_ui_element","type_text","research_web","browser_mcp"}
@@ -3101,11 +3111,21 @@ class JarvisApplication:
             raise PermissionDeniedError("Browser access is denied in Permissions.")
         started = time.perf_counter()
         from jarvis.core.navigation_reference import page_navigation
+        navigation = page_navigation(task)
+        system_browser = getattr(getattr(tool, "client", None), "mode", "") == "system"
+        public_read_url = ""
+        if system_browser:
+            if navigation:
+                return "Use Back or select the link in your regular browser. This connection reads public pages by URL."
+            url_match = re.search(r"https://[^\s<>]+", task)
+            public_read_url = url_match[0].rstrip(",.;)") if url_match else self.interaction.focus_url
+            if not public_read_url or urlsplit(public_read_url).scheme != "https":
+                return "Give me a public HTTPS page to read, or ask me to open one first."
         # Back and observed link ordinals are local operations. A missing API
         # connection or exhausted quota must not prevent them from executing.
         engine = None
         provider = None
-        if page_navigation(task) is None:
+        if navigation is None:
             engine = self._route_agent_request("Explain the following page", agent_override)
             if isinstance(engine, NativeAgentEngine):
                 engine = ReasoningAgentEngine(engine.agent_service.model_provider)
@@ -3132,9 +3152,23 @@ class JarvisApplication:
             if grounded and not getattr(provider, "supports_grounded_planner", False):
                 report_status("Grounded planner needs a direct Groq GPT-OSS connection. Using the standard planner.")
                 grounded = False
+            if system_browser and not grounded:
+                return "To read public pages in this trial, enable the grounded browser planner and select direct Groq GPT-OSS."
+            visible_verbs = r"(?:open|show|visit|browse|follow)\b"
+            wants_visible_page = re.match(r"^(?:please\s+)?" + visible_verbs, task, re.I)
+            if system_browser and url_match and public_read_url == self.interaction.focus_url:
+                wants_visible_page = re.search(r"\b" + visible_verbs, task[url_match.end():], re.I)
+            restricts_opening = re.search(r"\b(?:do not|don['’]t|never|without)\b", task, re.I)
+            def show_page(url):
+                if url == self.interaction.focus_url:
+                    return
+                request = ToolRequest(tool_name="open_url", arguments={"url": url})
+                self._execute_tool_with_confirmation(request, confirmation_handler)
+                self._remember_open_action(request)
             result = run_browser(provider, execute, task, resume_url=resume_url, history=history,
                                  search=search if "research_web" in self.tool_service.registry.names() else None,
-                                 grounded=grounded)
+                                 grounded=grounded, public_read_url=public_read_url,
+                                 show_page=show_page if system_browser and wants_visible_page and not restricts_opening else None)
         finally:
             if engine is not None and self._last_route_decision is not None:
                 self._record_agent_telemetry(self._last_route_decision, engine, time.perf_counter() - started)

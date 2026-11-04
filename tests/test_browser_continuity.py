@@ -111,7 +111,8 @@ def test_redirect_receipt_remembers_the_observed_destination(assistant):
 
 
 @pytest.mark.parametrize("failure", [None, "bad_link", "bad_evidence", "quota", "cancel"])
-def test_grounded_desktop_route(assistant, monkeypatch, failure):
+@pytest.mark.parametrize("system_browser", [False, True])
+def test_grounded_desktop_route(assistant, monkeypatch, failure, system_browser):
     pytest.importorskip("pydantic_ai")
     pytest.importorskip("groq")
     import httpx
@@ -119,6 +120,15 @@ def test_grounded_desktop_route(assistant, monkeypatch, failure):
     from jarvis.models.openai_compatible import OpenAICompatibleProvider
 
     app, browser, standard_model = assistant
+    visible_opens = []
+    if system_browser:
+        browser.mode = "system"
+        browser.url = "about:blank"
+        def open_in_regular_browser(url, **_kwargs):
+            visible_opens.append(url)
+            return True
+
+        monkeypatch.setattr("webbrowser.open", open_in_regular_browser)
     control = RequestControl(input_source="voice")
     requests = []
 
@@ -148,6 +158,8 @@ def test_grounded_desktop_route(assistant, monkeypatch, failure):
     monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: pytest.fail("Local command contacted AI"))
     assert app.interact("Open https://example.com/start").kind == "action"
     assert not requests
+    if system_browser:
+        assert browser.calls == [] and visible_opens == ["https://example.com/start"]
     from jarvis.agents.reasoning import ReasoningAgentEngine
     monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: ReasoningAgentEngine(provider))
     reply = app.interact("browser: Show me the documentation and describe the page.", request_control=control)
@@ -162,6 +174,11 @@ def test_grounded_desktop_route(assistant, monkeypatch, failure):
         assert reply.message == "The page shows Documentation."
         assert "https://example.com/docs" in reply.details
     assert browser.url.endswith("/docs" if failure in {None, "bad_evidence"} else "/start")
+    if system_browser:
+        assert visible_opens == (["https://example.com/start", "https://example.com/docs"]
+                                 if failure in {None, "bad_evidence"} else ["https://example.com/start"])
+        assert any(event.stage == "observed" for event in reply.events)
+        return
     app.integrations.grounded_planner = False
     monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: ReasoningAgentEngine(standard_model))
     assert "Documentation" in app.interact("browser: Describe the page.").details

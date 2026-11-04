@@ -12,6 +12,7 @@ def main():
     sys.path.insert(0, str(root / "src"))
     site.addsitedir(str(base / "Lib" / "site-packages"))
     os.environ.setdefault("JARVIS_BROWSER_PLANNER", "grounded")
+    os.environ.setdefault("JARVIS_BROWSER_MODE", "system")
     os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
     os.chdir(root)
 

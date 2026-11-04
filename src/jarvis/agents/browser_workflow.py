@@ -29,17 +29,20 @@ def browser_task(prompt):
     return None
 
 
-def run_browser(provider, execute, task, *, resume_url="", history=(), search=None, grounded=False):
+def run_browser(provider, execute, task, *, resume_url="", history=(), search=None, grounded=False,
+                public_read_url="", show_page=None):
     evidence = []
     try:
-        return _run_browser(provider, execute, task, evidence, resume_url, history, search, grounded)
+        return _run_browser(provider, execute, task, evidence, resume_url, history, search, grounded,
+                            public_read_url, show_page)
     except (ProviderConnectionError, ProviderApprovalError, HermesAgentError) as error:
         check_cancelled()
         if evidence:
-            completed = "Task partly completed.\n\nCompleted: opened and read these pages:\n" + "\n".join(dict.fromkeys(evidence))
+            work = "read these public pages" if public_read_url else "opened and read these pages"
+            completed = f"Task partly completed.\n\nCompleted: {work}:\n" + "\n".join(dict.fromkeys(evidence))
         else:
             completed = "Task not completed. No page was observed."
-        receipt = "The page is open. " if evidence else ""
+        receipt = ("I read the page. " if public_read_url else "The page is open. ") if evidence else ""
         if isinstance(error, ProviderConnectionError) and error.status_code == 429:
             report_event(AssistantEvent("blocked", receipt + "I couldn't finish the rest of your request. "
                                         + rate_limit_message(error), operation="provider_limit"))
@@ -53,7 +56,8 @@ def run_browser(provider, execute, task, *, resume_url="", history=(), search=No
         raise RequestCancelledError("Browser task stopped. The task is incomplete; completed actions remain in place." + pages) from error
 
 
-def _run_browser(provider, execute, task, evidence, resume_url, history, search, grounded):
+def _run_browser(provider, execute, task, evidence, resume_url, history, search, grounded,
+                 public_read_url, show_page):
     report_event(AssistantEvent("narration", "I'll check the page."))
     observation = {"url": "", "snapshot": "", "links": []}
     search_results = {}
@@ -65,9 +69,15 @@ def _run_browser(provider, execute, task, evidence, resume_url, history, search,
         return page
     initial = re.search(r"https://[^\s<>]+", task)
     navigation = page_navigation(task)
-    if resume_url:
+    if public_read_url:
+        observation = observe({"action": "navigate", "url": public_read_url})
+    elif resume_url:
         observation = observe({"action": "snapshot"})
         if observation.get("url") != resume_url and navigation != {"action":"back"}:
+            if not observation.get("url"):
+                message = "The connected browser tab no longer has a readable page. Give me the page URL to open it again."
+                report_event(AssistantEvent("clarification", message))
+                return message
             choices = tuple(Choice(url, url) for url in dict.fromkeys([resume_url, observation.get("url", "")]) if url)
             message = "The browser page changed. Which page would you like me to use?"
             report_event(AssistantEvent("clarification", message, choices=choices))
@@ -90,7 +100,7 @@ def _run_browser(provider, execute, task, evidence, resume_url, history, search,
         report_event(AssistantEvent("summary", message))
         return message
     if grounded:
-        return _run_grounded(provider, observe, task, observation, history)
+        return _run_grounded(provider, observe, task, observation, history, show_page=show_page)
     for step in range(6):
         check_cancelled()
         progress = f"Page read: {observation['url']}. " if observation.get("url") else "Browser: "
@@ -153,7 +163,7 @@ def _run_browser(provider, execute, task, evidence, resume_url, history, search,
     return "The browser reached its six-step limit. No completion is claimed.\nPages observed:\n" + "\n".join(dict.fromkeys(evidence))
 
 
-def _run_grounded(provider, observe, task, page, history):
+def _run_grounded(provider, observe, task, page, history, *, show_page=None):
     from jarvis.agents.grounded_browser import decision_input, plan_page
 
     message = "I couldn't read the current browser page."
@@ -180,6 +190,8 @@ def _run_grounded(provider, observe, task, page, history):
             if not answer or not lines or any(not 1 <= line <= len(source_lines) for line in lines):
                 message = "I couldn't verify an answer from the visible page."
                 break
+            if show_page is not None and not followed:
+                show_page(page["url"])
             report_event(AssistantEvent("summary", answer))
             sources = "\n".join(f"[{line}] {source_lines[line - 1]}" for line in lines)
             return f"{answer}\n\nSources read:\n{page['url']}\n{sources}"
@@ -194,5 +206,8 @@ def _run_grounded(provider, observe, task, page, history):
         except (BrowserActionUncertainError, ValueError) as error:
             message = str(error)
             break
+        if show_page is not None:
+            check_cancelled()
+            show_page(page["url"])
     report_event(AssistantEvent("blocked", message))
     return ("Task partly completed. " if page.get("url") else "Task not completed. ") + message

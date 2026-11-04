@@ -89,6 +89,9 @@ def action_event(tool: str, arguments, result=None) -> AssistantEvent:
         url = str(result.get("url", "")) if isinstance(result, dict) else ""
         target = str(result.get("title", ""))[:180] if isinstance(result, dict) else ""
         label = target or page_label(url)
+        if isinstance(result, dict) and result.get("background"):
+            message = f"Read {label} in the background." if url else "No public page was observed."
+            return AssistantEvent("observed", message, tool, url, target=target, operation=arguments.get("action"))
         operation = arguments.get("action")
         if not url:
             message = "Checked the available browser tabs." if result is not None and operation == "tabs" else "Working in the browser…"

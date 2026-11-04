@@ -108,14 +108,14 @@ class PlaywrightMCP(StdioMCPClient):
             config = root/".mcp/browser-config.json"
             config.write_text(json.dumps({"browser":{"contextOptions":{"acceptDownloads":False}}}),encoding="utf-8")
             args += ["--config",str(config),"--isolated","--executable-path",str(browsers[-1]),"--block-service-workers"]
-            if self.headless:args.append("--headless")
+            if self.headless or self.mode == "system":args.append("--headless")
         return StdioServerParameters(command=node,args=args,env=local_environment(),cwd=str(root))
 
     def decode_result(self,value):
         return load_snapshot(super().decode_result(value)["text"])
 
     def configure(self,mode,profile=""):
-        if mode not in {"isolated","extension"}:raise ValueError("Choose a supported browser connection.")
+        if mode not in {"system","isolated","extension"}:raise ValueError("Choose a supported browser connection.")
         if mode != self.mode or profile != self.profile:
             self.close()
             if self.thread is not None:raise ValueError("A browser operation is still stopping. Try changing the connection again shortly.")
@@ -175,7 +175,7 @@ class BrowserMCPTool(Tool):
         if self.last["url"] and not public_url(self.last["url"]):
             self.last = {"url": "", "snapshot": "", "links": []}
             raise ValueError("The browser redirected outside the public HTTPS navigation policy.")
-        return {"ok": True, **self.last}
+        return {"ok": True, **self.last, "background": getattr(self.client, "mode", "") == "system"}
 
     def close(self):
         self.client.close()

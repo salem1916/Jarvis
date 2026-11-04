@@ -578,6 +578,8 @@ def build_application(
 
     browser = BrowserMCPTool()
     def open_browser_url(url):
+        if getattr(browser.client, "mode", "") == "system":
+            return OpenUrlTool._open_default_browser(url)
         # Opening and subsequent reading/clicking must share one tab owner.
         # Returning the observation preserves redirects and verified page titles.
         return browser.execute({"action":"navigate","url":url})
