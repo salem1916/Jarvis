@@ -726,7 +726,7 @@ class JarvisWindow(QMainWindow):
         event.accept()
 
 
-def main() -> None:
+def main(*, title: str = "JARVIS") -> None:
     """
     Start JARVIS Desktop.
     """
@@ -740,6 +740,7 @@ def main() -> None:
     )
 
     window = JarvisWindow()
+    window.setWindowTitle(title)
 
     window.show()
 

@@ -3128,8 +3128,13 @@ class JarvisApplication:
                        if m.role in {"user", "assistant"}][-6:]
             def search(query):
                 return self._execute_tool_with_confirmation(ToolRequest(tool_name="research_web", arguments={"query": query}), confirmation_handler)
+            grounded = bool(provider and self.integrations and self.integrations.grounded_planner)
+            if grounded and not getattr(provider, "supports_grounded_planner", False):
+                report_status("Grounded planner needs a direct Groq GPT-OSS connection. Using the standard planner.")
+                grounded = False
             result = run_browser(provider, execute, task, resume_url=resume_url, history=history,
-                                 search=search if "research_web" in self.tool_service.registry.names() else None)
+                                 search=search if "research_web" in self.tool_service.registry.names() else None,
+                                 grounded=grounded)
         finally:
             if engine is not None and self._last_route_decision is not None:
                 self._record_agent_telemetry(self._last_route_decision, engine, time.perf_counter() - started)

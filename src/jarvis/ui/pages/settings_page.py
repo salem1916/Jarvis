@@ -173,6 +173,13 @@ class SettingsPage(QWidget):
             self.browser_mode.setCurrentIndex(self.browser_mode.findData(values["browser_mode"]))
             self.browser_profile.setText(values["profile"])
             self.windows_mcp.setChecked(values["windows_enabled"])
+            if jarvis.integrations.grounded_planner_available:
+                grounded = ToggleSwitch()
+                grounded.setChecked(jarvis.integrations.grounded_planner)
+                grounded.toggled.connect(self._set_grounded_planner)
+                self._row(integrations, "Grounded browser planner (trial)",
+                          "Uses direct Groq GPT-OSS to follow one visible link and answer from the page. Applies immediately for this session.",
+                          grounded)
 
         web = self._card(layout, "Web research")
         web_status = QLabel("Tavily · free keyless search and extraction. JARVIS plans queries, checks source relevance, and retries at most once. Rate limits apply; no account or paid upgrade is enabled.")
@@ -308,6 +315,10 @@ class SettingsPage(QWidget):
             return ("Integration settings saved. Chrome may ask you to select a tab on the first connection." if mode == "extension"
                     else "Integration settings saved. Jarvis will use its separate browser; no Chrome extension is needed.")
         self._operate(apply,self.status.setText,"Applying local integration settings…")
+
+    def _set_grounded_planner(self, enabled):
+        self.jarvis.integrations.grounded_planner = enabled
+        self.status.setText("Grounded browser planner enabled." if enabled else "Standard browser planner enabled.")
 
     def _check_windows_mcp(self):
         def connect():

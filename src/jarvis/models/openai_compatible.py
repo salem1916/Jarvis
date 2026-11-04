@@ -43,6 +43,10 @@ class OpenAICompatibleProvider(ModelProvider):
     Tool execution remains inside the trusted JARVIS core.
     """
 
+    @property
+    def supports_grounded_planner(self) -> bool:
+        return self.name == "groq" and self.model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
+
     def __init__(
         self,
         *,
@@ -106,7 +110,9 @@ class OpenAICompatibleProvider(ModelProvider):
         check_cancelled()
         self.cooldown.check(self.name)
         control = current_control()
-        if control is not None and control.on_delta is not None and not request.tools and not request.json_output:
+        if request.json_schema is not None and (not self.supports_grounded_planner or request.tools):
+            raise ValueError("This provider cannot run the grounded browser planner.")
+        if control is not None and control.on_delta is not None and not request.tools and not request.json_output and request.json_schema is None:
             try:
                 return self._generate_stream(request)
             except httpx.RequestError as exc:
@@ -141,9 +147,12 @@ class OpenAICompatibleProvider(ModelProvider):
                     payload["reasoning_effort"] = "low"
         if request.json_output and not request.tools and self.name in {"groq", "openai", "openrouter", "openrouter_free"}:
             payload["response_format"] = {"type": "json_object"}
-        strict_envelope = request.json_output and not request.tools and self.name == "groq" and self.model in {
-            "openai/gpt-oss-20b", "openai/gpt-oss-120b",
-        }
+        strict_envelope = request.json_output and request.json_schema is None and not request.tools and self.supports_grounded_planner
+        if request.json_schema is not None:
+            payload["response_format"] = {"type": "json_schema", "json_schema": {
+                "name": "jarvis_browser_decision", "strict": True, "schema": request.json_schema,
+            }}
+            payload["reasoning_effort"] = "low"
         if strict_envelope:
             # GPT-OSS can emit a native tool channel despite JSON-object mode,
             # causing Groq's "Tool choice is none" rejection. Constrained

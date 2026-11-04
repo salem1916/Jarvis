@@ -110,6 +110,64 @@ def test_redirect_receipt_remembers_the_observed_destination(assistant):
     assert not model.requests
 
 
+@pytest.mark.parametrize("failure", [None, "bad_link", "bad_evidence", "quota", "cancel"])
+def test_grounded_desktop_route(assistant, monkeypatch, failure):
+    pytest.importorskip("pydantic_ai")
+    pytest.importorskip("groq")
+    import httpx
+
+    from jarvis.models.openai_compatible import OpenAICompatibleProvider
+
+    app, browser, standard_model = assistant
+    control = RequestControl(input_source="voice")
+    requests = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        schema = payload["response_format"]["json_schema"]["schema"]
+        assert schema["additionalProperties"] is False
+        assert schema["properties"]["evidence"]["items"]["enum"]
+        assert not payload["stream"] and not payload.get("tools")
+        if failure == "quota":
+            return httpx.Response(429, headers={"Retry-After": "20"}, json={"error": {}})
+        if len(requests) == 1:
+            decision = {"kind": "open_link", "index": 99 if failure == "bad_link" else 1,
+                        "text": "", "evidence": []}
+            if failure == "cancel":
+                control.cancelled.set()
+        else:
+            decision = {"kind": "reply", "index": 0, "text": "The page shows Documentation.",
+                        "evidence": [99 if failure == "bad_evidence" else 1]}
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(decision)}}]})
+
+    provider = OpenAICompatibleProvider(provider_name="groq", model="openai/gpt-oss-20b",
+                                        base_url="https://api.groq.test/openai/v1", api_key="fixture",
+                                        transport=httpx.MockTransport(respond))
+    app.integrations.grounded_planner = True
+    monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: pytest.fail("Local command contacted AI"))
+    assert app.interact("Open https://example.com/start").kind == "action"
+    assert not requests
+    from jarvis.agents.reasoning import ReasoningAgentEngine
+    monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: ReasoningAgentEngine(provider))
+    reply = app.interact("browser: Show me the documentation and describe the page.", request_control=control)
+    assert len(requests) == (2 if failure in {None, "bad_evidence"} else 1)
+    if failure == "cancel":
+        assert reply.kind == "cancelled"
+    elif failure:
+        assert reply.kind == "partial"
+        if failure == "quota":
+            assert "usage limit" in reply.message
+    else:
+        assert reply.message == "The page shows Documentation."
+        assert "https://example.com/docs" in reply.details
+    assert browser.url.endswith("/docs" if failure in {None, "bad_evidence"} else "/start")
+    app.integrations.grounded_planner = False
+    monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: ReasoningAgentEngine(standard_model))
+    assert "Documentation" in app.interact("browser: Describe the page.").details
+    assert len(standard_model.requests) == 1
+
+
 def test_explicit_browser_goal_is_not_reinterpreted_as_search_intent(assistant):
     app, browser, model = assistant
     app.interact("Open https://example.com/start")

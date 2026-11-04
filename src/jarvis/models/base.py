@@ -142,6 +142,7 @@ class ModelRequest(BaseModel):
     # in durable chat history or tool logs. Adapters must send them as images.
     images: list[str] = Field(default_factory=list, max_length=2, repr=False)
     json_output: bool = False
+    json_schema: dict | None = None
     tool_choice: Literal["auto", "required"] = "auto"
 
     messages: list[

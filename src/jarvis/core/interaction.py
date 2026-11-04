@@ -171,7 +171,8 @@ def build_reply(text: str, events, *, error: Exception | None = None) -> Assista
         else:
             message = short_reply(spoken or text, sentence_limit=0 if spoken else 2) or completed[-1].message
         return AssistantReply("action", message, message, text, recorded)
-    return AssistantReply("answer", text, short_reply(text), text, recorded)
+    summary = next((event.message for event in reversed(recorded) if event.stage == "summary"), "")
+    return AssistantReply("answer", summary or text, short_reply(summary or text, sentence_limit=0 if summary else 2), text, recorded)
 
 
 @dataclass

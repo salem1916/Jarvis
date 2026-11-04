@@ -1,5 +1,7 @@
 """User-selected local integrations. Connections start only on explicit use."""
+import os
 import re
+from importlib.util import find_spec
 
 from jarvis.tools.browser_mcp import BrowserMCPTool
 from jarvis.tools.windows_mcp import WindowsSnapshotTool
@@ -8,6 +10,8 @@ from jarvis.tools.windows_mcp import WindowsSnapshotTool
 class Integrations:
     def __init__(self,app):
         self.app = app
+        self.grounded_planner_available = find_spec("pydantic_ai") is not None and find_spec("groq") is not None
+        self.grounded_planner = self.grounded_planner_available and os.getenv("JARVIS_BROWSER_PLANNER") == "grounded"
         browser = app.tool_service.registry.get("browser_mcp")
         snapshot = app.tool_service.registry.get("windows_snapshot")
         if not isinstance(browser,BrowserMCPTool) or not isinstance(snapshot,WindowsSnapshotTool):

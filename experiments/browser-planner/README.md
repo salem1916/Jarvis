@@ -61,3 +61,15 @@ The response schema now restricts evidence IDs to lines actually present in the 
 The live W3C retest opened the correct page and returned all four principles with verified source lines in 1.73 seconds after the starting page loaded. It used two Groq requests. Back used zero requests and the test browser closed. All 25 controlled checks passed. The evidence fix and display fix were verified using four live requests in total across both W3C runs. The change lives in the prototype.
 
 See `results/w3c-evidence-final.json` and `results/evidence-controlled-results.json` for the retest data. The next comparison should exercise corrections and follow-ups through the desktop UI on varied tasks, with the same model and permissions on both branches. Compare correct actions, response time and provider requests before choosing which code to adopt.
+
+## Desktop trial
+
+After the Windows setup above and the [browser setup](../../docs/BROWSER_MCP.md), start the trial window:
+
+```powershell
+& .\experiments\browser-planner\.venv\Scripts\python.exe .\experiments\browser-planner\desktop_trial.py
+```
+
+Select a direct Groq GPT-OSS 20B or 120B connection in Jarvis. The launcher enables **Settings → Browser & desktop integrations → Grounded browser planner (trial)** for this session. Turn that switch off to compare the standard planner. Both use your existing browser connection and permissions. The separate Jarvis browser works without the Chrome extension.
+
+For a first comparison, send `Open https://www.sqlite.org/docs.html` and then `browser: Open the Getting Started guide and tell me the name of the command-line program it recommends.` Use **Show details** to inspect the source excerpts. Follow up with `No, wait, go back` to test the same tab's history. The trial planner handles one observed link and up to two Groq requests for each browser task. Basic navigation and ordinary chat keep their existing paths.

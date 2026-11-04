@@ -29,10 +29,10 @@ def browser_task(prompt):
     return None
 
 
-def run_browser(provider, execute, task, *, resume_url="", history=(), search=None):
+def run_browser(provider, execute, task, *, resume_url="", history=(), search=None, grounded=False):
     evidence = []
     try:
-        return _run_browser(provider, execute, task, evidence, resume_url, history, search)
+        return _run_browser(provider, execute, task, evidence, resume_url, history, search, grounded)
     except (ProviderConnectionError, ProviderApprovalError, HermesAgentError) as error:
         check_cancelled()
         if evidence:
@@ -53,7 +53,7 @@ def run_browser(provider, execute, task, *, resume_url="", history=(), search=No
         raise RequestCancelledError("Browser task stopped. The task is incomplete; completed actions remain in place." + pages) from error
 
 
-def _run_browser(provider, execute, task, evidence, resume_url, history, search=None):
+def _run_browser(provider, execute, task, evidence, resume_url, history, search, grounded):
     report_event(AssistantEvent("narration", "I'll check the page."))
     observation = {"url": "", "snapshot": "", "links": []}
     search_results = {}
@@ -89,6 +89,8 @@ def _run_browser(provider, execute, task, evidence, resume_url, history, search=
         message = ("Went back to " if navigation["action"] == "back" else "Opened ") + (observation.get("title") or observation.get("url", "the page")) + "."
         report_event(AssistantEvent("summary", message))
         return message
+    if grounded:
+        return _run_grounded(provider, observe, task, observation, history)
     for step in range(6):
         check_cancelled()
         progress = f"Page read: {observation['url']}. " if observation.get("url") else "Browser: "
@@ -149,3 +151,48 @@ def _run_browser(provider, execute, task, evidence, resume_url, history, search=
             observation = {**observe({"action":"snapshot"}), "operation_error": str(exc)}
     report_event(AssistantEvent("blocked", "I reached the browser step limit before finishing your request. The pages I opened are still available."))
     return "The browser reached its six-step limit. No completion is claimed.\nPages observed:\n" + "\n".join(dict.fromkeys(evidence))
+
+
+def _run_grounded(provider, observe, task, page, history):
+    from jarvis.agents.grounded_browser import decision_input, plan_page
+
+    message = "I couldn't read the current browser page."
+    for followed in (False, True):
+        check_cancelled()
+        if not page.get("url"):
+            break
+        report_status("Grounded planner · checking the visible page…")
+        data, source_lines = decision_input(page, task, history, followed=followed)
+        try:
+            decision = plan_page(provider, data, len(source_lines))
+        except ProviderConnectionError:
+            raise
+        except ValueError as error:
+            message = str(error)
+            break
+        check_cancelled()
+        answer = decision.text.strip()
+        if decision.kind == "clarify" and answer:
+            report_event(AssistantEvent("clarification", answer))
+            return answer
+        if decision.kind == "reply":
+            lines = list(dict.fromkeys(decision.evidence))
+            if not answer or not lines or any(not 1 <= line <= len(source_lines) for line in lines):
+                message = "I couldn't verify an answer from the visible page."
+                break
+            report_event(AssistantEvent("summary", answer))
+            sources = "\n".join(f"[{line}] {source_lines[line - 1]}" for line in lines)
+            return f"{answer}\n\nSources read:\n{page['url']}\n{sources}"
+        kind = "result" if decision.kind == "open_result" else "link"
+        visible = data["page"]["result_links" if kind == "result" else "links"]
+        if not any(link["index"] == decision.index for link in visible):
+            message = ("I opened the destination, but this planner is limited to one link per request."
+                       if followed else "I couldn't verify which visible link to open.")
+            break
+        try:
+            page = observe({"action": "follow_link", "link_index": decision.index, "link_kind": kind})
+        except (BrowserActionUncertainError, ValueError) as error:
+            message = str(error)
+            break
+    report_event(AssistantEvent("blocked", message))
+    return ("Task partly completed. " if page.get("url") else "Task not completed. ") + message
