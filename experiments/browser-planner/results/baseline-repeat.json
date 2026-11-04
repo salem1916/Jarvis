@@ -1,0 +1,81 @@
+{
+  "live": true,
+  "model": "openai/gpt-oss-20b",
+  "baseline": [
+    {
+      "case": "open_app",
+      "pass": true,
+      "kind": "action",
+      "reply": "Calculator is opening.",
+      "requests": 0,
+      "tokens": 0,
+      "http_statuses": [],
+      "actions": [],
+      "seconds": 0.005,
+      "first_event_seconds": 0.004
+    },
+    {
+      "case": "question",
+      "pass": true,
+      "kind": "answer",
+      "reply": "SQL (Structured Query Language) is the standard language for interacting with relational databases. It lets you create, read, update, and delete data, and to define and modify the database structure. SQL commands are grouped into categories such as DDL (CREATE, ALTER, DROP), DML (SELECT, INSERT, UPDATE, DELETE), and DCL (GRANT, REVOKE). It’s used in almost every database system—from MySQL and PostgreSQL to Oracle and SQL Server.",
+      "requests": 1,
+      "tokens": 861,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.68,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "open_page",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened fixture.example.",
+      "requests": 0,
+      "tokens": 0,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.003,
+      "first_event_seconds": 0.001
+    },
+    {
+      "case": "show_and_answer",
+      "pass": false,
+      "kind": "partial",
+      "reply": "The page is open, but the AI provider is unavailable. I couldn't finish the rest of your request.",
+      "requests": 1,
+      "tokens": 0,
+      "http_statuses": [
+        400
+      ],
+      "actions": [],
+      "seconds": 1.458,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "correction",
+      "pass": false,
+      "kind": "skipped",
+      "requests": 0,
+      "reason": "The preceding turn did not open the expected guide."
+    },
+    {
+      "case": "ordinal",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened Returns guide.",
+      "requests": 0,
+      "tokens": 0,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.059,
+      "first_event_seconds": 0.057
+    }
+  ]
+}

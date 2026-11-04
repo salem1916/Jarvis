@@ -1,0 +1,310 @@
+{
+  "live": false,
+  "model": "openai/gpt-oss-20b",
+  "baseline": [
+    {
+      "case": "open_app",
+      "pass": true,
+      "kind": "action",
+      "reply": "Calculator is opening.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [],
+      "seconds": 0.005,
+      "first_event_seconds": 0.004
+    },
+    {
+      "case": "question",
+      "pass": true,
+      "kind": "answer",
+      "reply": "SQL is a language for querying databases.",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "open_page",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened fixture.example.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "show_and_answer",
+      "pass": true,
+      "kind": "action",
+      "reply": "Returns must arrive within 37 days.",
+      "requests": 2,
+      "tokens": null,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "correction",
+      "pass": true,
+      "kind": "action",
+      "reply": "Went back to Store help.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "ordinal",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened Returns guide.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.016,
+      "first_event_seconds": 0.015
+    },
+    {
+      "case": "reset",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened fixture.example.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "quota_after_action",
+      "pass": true,
+      "kind": "partial",
+      "reply": "The page is open, but the AI provider reached its usage limit. I couldn't finish the rest of your request.",
+      "requests": 2,
+      "tokens": null,
+      "http_statuses": [
+        200,
+        429
+      ],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "reset",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened fixture.example.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.0,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "cancel_late_decision",
+      "pass": true,
+      "kind": "cancelled",
+      "reply": "Stopped. Read Store help.",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    }
+  ],
+  "prototype": [
+    {
+      "case": "open_app",
+      "pass": true,
+      "kind": "action",
+      "reply": "Calculator is opening.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [],
+      "seconds": 0.001,
+      "first_event_seconds": 0.001
+    },
+    {
+      "case": "question",
+      "pass": true,
+      "kind": "answer",
+      "reply": "SQL is a language for querying databases.",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.075,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "open_page",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened fixture.example.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.0,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "show_and_answer",
+      "pass": true,
+      "kind": "action",
+      "reply": "Returns must arrive within 37 days.",
+      "requests": 2,
+      "tokens": null,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.009,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "correction",
+      "pass": true,
+      "kind": "action",
+      "reply": "Went back to Store help.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "ordinal",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened Returns guide.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.018,
+      "first_event_seconds": 0.017
+    },
+    {
+      "case": "reset",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened fixture.example.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.0,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "quota_after_action",
+      "pass": true,
+      "kind": "partial",
+      "reply": "Opened Returns guide. The AI provider reached its usage limit, so I stopped here. Check its usage page for the reset time.",
+      "requests": 2,
+      "tokens": null,
+      "http_statuses": [
+        200,
+        429
+      ],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.008,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "reset",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened fixture.example.",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.0,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "cancel_late_decision",
+      "pass": true,
+      "kind": "cancelled",
+      "reply": "Stopped.",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.013,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "reject_unobserved_link",
+      "pass": true,
+      "kind": "failed",
+      "reply": "The proposed link is not in the observed page.",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.004,
+      "first_event_seconds": 0.0
+    }
+  ]
+}

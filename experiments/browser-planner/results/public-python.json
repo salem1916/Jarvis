@@ -1,0 +1,66 @@
+{
+  "model": "openai/gpt-oss-20b",
+  "requests": 3,
+  "tokens": 6077,
+  "tabs": "### Result\n- 0: (current) [Python 3.14.10 documentation](https://docs.python.org/3.14/)",
+  "browser_closed": true,
+  "sites": [
+    {
+      "site": "Python",
+      "open": {
+        "kind": "action",
+        "url": "https://docs.python.org/3.14/",
+        "requests": 0,
+        "tokens": 0,
+        "http_statuses": [],
+        "seconds": 1.277,
+        "completed_navigation": []
+      },
+      "observed_link_count": 58,
+      "target_link_positions": [
+        7
+      ],
+      "target_shortlisted": true,
+      "task": {
+        "kind": "action",
+        "url": "https://docs.python.org/3.14/tutorial/index.html",
+        "requests": 2,
+        "tokens": 6077,
+        "http_statuses": [
+          200,
+          200
+        ],
+        "seconds": 2.289,
+        "completed_navigation": [
+          "https://docs.python.org/3.14/tutorial/index.html"
+        ],
+        "terms_in_page_context": true,
+        "pass": true
+      },
+      "followup": {
+        "kind": "failed",
+        "url": "https://docs.python.org/3.14/tutorial/index.html",
+        "requests": 1,
+        "tokens": 0,
+        "http_statuses": [
+          429
+        ],
+        "seconds": 0.246,
+        "completed_navigation": [],
+        "pass": false
+      },
+      "back": {
+        "kind": "action",
+        "url": "https://docs.python.org/3.14/",
+        "requests": 0,
+        "tokens": 0,
+        "http_statuses": [],
+        "seconds": 0.112,
+        "completed_navigation": [
+          "https://docs.python.org/3.14/"
+        ],
+        "pass": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,305 @@
+{
+  "live": false,
+  "model": "openai/gpt-oss-20b",
+  "baseline": [
+    {
+      "case": "open_app",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [],
+      "seconds": 0.005,
+      "first_event_seconds": 0.004
+    },
+    {
+      "case": "question",
+      "pass": true,
+      "kind": "answer",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "open_page",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "show_and_answer",
+      "pass": true,
+      "kind": "action",
+      "requests": 2,
+      "tokens": null,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.002,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "correction",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.0,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "ordinal",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.018,
+      "first_event_seconds": 0.017
+    },
+    {
+      "case": "reset",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "quota_after_action",
+      "pass": true,
+      "kind": "partial",
+      "requests": 2,
+      "tokens": null,
+      "http_statuses": [
+        200,
+        429
+      ],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "reset",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.0,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "cancel_late_decision",
+      "pass": true,
+      "kind": "cancelled",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    }
+  ],
+  "prototype": [
+    {
+      "case": "open_app",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [],
+      "seconds": 0.001,
+      "first_event_seconds": 0.001
+    },
+    {
+      "case": "question",
+      "pass": true,
+      "kind": "answer",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.079,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "open_page",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.0,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "show_and_answer",
+      "pass": true,
+      "kind": "action",
+      "requests": 2,
+      "tokens": null,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.009,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "correction",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.001,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "ordinal",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.017,
+      "first_event_seconds": 0.016
+    },
+    {
+      "case": "reset",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.0,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "quota_after_action",
+      "pass": true,
+      "kind": "partial",
+      "requests": 2,
+      "tokens": null,
+      "http_statuses": [
+        200,
+        429
+      ],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.008,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "reset",
+      "pass": true,
+      "kind": "action",
+      "requests": 0,
+      "tokens": null,
+      "http_statuses": [],
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.0,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "cancel_late_decision",
+      "pass": true,
+      "kind": "cancelled",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.004,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "reject_unobserved_link",
+      "pass": true,
+      "kind": "failed",
+      "requests": 1,
+      "tokens": null,
+      "http_statuses": [
+        200
+      ],
+      "actions": [],
+      "seconds": 0.004,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "reject_unobserved_evidence",
+      "pass": true,
+      "kind": "partial",
+      "requests": 2,
+      "tokens": null,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.007,
+      "first_event_seconds": 0.0
+    }
+  ]
+}

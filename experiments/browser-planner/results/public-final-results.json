@@ -1,0 +1,144 @@
+{
+  "model": "openai/gpt-oss-20b",
+  "requests": 7,
+  "tokens": 8458,
+  "tabs": "### Result\n- 0: (current) [Accessibility Principles | Web Accessibility Initiative (WAI) | W3C](https://www.w3.org/WAI/fundamentals/accessibility-principles/)",
+  "browser_closed": true,
+  "sites": [
+    {
+      "site": "Python",
+      "open": {
+        "kind": "action",
+        "url": "https://docs.python.org/3.14/",
+        "requests": 0,
+        "tokens": 0,
+        "http_statuses": [],
+        "seconds": 1.402,
+        "completed_navigation": []
+      },
+      "observed_link_count": 58,
+      "target_link_positions": [
+        7
+      ],
+      "target_shortlisted": true,
+      "task": {
+        "kind": "action",
+        "url": "https://docs.python.org/3.14/tutorial/index.html",
+        "requests": 2,
+        "tokens": 2881,
+        "http_statuses": [
+          200,
+          200
+        ],
+        "seconds": 1.427,
+        "completed_navigation": [
+          "https://docs.python.org/3.14/tutorial/index.html"
+        ],
+        "terms_in_page_context": true,
+        "pass": true
+      },
+      "followup": {
+        "kind": "answer",
+        "url": "https://docs.python.org/3.14/tutorial/index.html",
+        "requests": 1,
+        "tokens": 1711,
+        "http_statuses": [
+          200
+        ],
+        "seconds": 0.578,
+        "completed_navigation": [],
+        "pass": true
+      },
+      "back": {
+        "kind": "action",
+        "url": "https://docs.python.org/3.14/",
+        "requests": 0,
+        "tokens": 0,
+        "http_statuses": [],
+        "seconds": 0.15,
+        "completed_navigation": [
+          "https://docs.python.org/3.14/"
+        ],
+        "pass": true
+      }
+    },
+    {
+      "site": "SQLite",
+      "open": {
+        "kind": "action",
+        "url": "https://www.sqlite.org/docs.html",
+        "requests": 0,
+        "tokens": 0,
+        "http_statuses": [],
+        "seconds": 1.843,
+        "completed_navigation": []
+      },
+      "observed_link_count": 33,
+      "target_link_positions": [
+        10
+      ],
+      "target_shortlisted": true,
+      "task": {
+        "kind": "action",
+        "url": "https://www.sqlite.org/quickstart.html",
+        "requests": 2,
+        "tokens": 2532,
+        "http_statuses": [
+          200,
+          200
+        ],
+        "seconds": 1.651,
+        "completed_navigation": [
+          "https://www.sqlite.org/quickstart.html"
+        ],
+        "terms_in_page_context": true,
+        "pass": true
+      },
+      "back": {
+        "kind": "action",
+        "url": "https://www.sqlite.org/docs.html",
+        "requests": 0,
+        "tokens": 0,
+        "http_statuses": [],
+        "seconds": 0.095,
+        "completed_navigation": [
+          "https://www.sqlite.org/docs.html"
+        ],
+        "pass": true
+      }
+    },
+    {
+      "site": "W3C",
+      "open": {
+        "kind": "action",
+        "url": "https://www.w3.org/WAI/fundamentals/accessibility-intro/",
+        "requests": 0,
+        "tokens": 0,
+        "http_statuses": [],
+        "seconds": 0.519,
+        "completed_navigation": []
+      },
+      "observed_link_count": 78,
+      "target_link_positions": [
+        30
+      ],
+      "target_shortlisted": true,
+      "task": {
+        "kind": "partial",
+        "url": "https://www.w3.org/WAI/fundamentals/accessibility-principles/",
+        "requests": 2,
+        "tokens": 1334,
+        "http_statuses": [
+          200,
+          429
+        ],
+        "seconds": 1.004,
+        "completed_navigation": [
+          "https://www.w3.org/WAI/fundamentals/accessibility-principles/"
+        ],
+        "terms_in_page_context": true,
+        "pass": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,148 @@
+{
+  "live": true,
+  "model": "openai/gpt-oss-20b",
+  "baseline": [
+    {
+      "case": "open_app",
+      "pass": true,
+      "kind": "action",
+      "reply": "Calculator is opening.",
+      "requests": 0,
+      "tokens": 0,
+      "actions": [],
+      "seconds": 0.006,
+      "first_event_seconds": 0.005
+    },
+    {
+      "case": "question",
+      "pass": true,
+      "kind": "answer",
+      "reply": "SQL stands for **Structured Query Language**. It’s the standard language used to interact with relational databases: you can create tables, insert, update, and delete data, and query information using SELECT statements.",
+      "requests": 1,
+      "tokens": 809,
+      "actions": [],
+      "seconds": 1.558,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "open_page",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened fixture.example.",
+      "requests": 0,
+      "tokens": 0,
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.002,
+      "first_event_seconds": 0.001
+    },
+    {
+      "case": "show_and_answer",
+      "pass": false,
+      "kind": "partial",
+      "reply": "The page is open, but the AI provider is unavailable. I couldn't finish the rest of your request.",
+      "requests": 1,
+      "tokens": 0,
+      "actions": [],
+      "seconds": 0.729,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "correction",
+      "pass": false,
+      "kind": "skipped",
+      "requests": 0,
+      "reason": "The preceding turn did not open the expected guide."
+    },
+    {
+      "case": "ordinal",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened Returns guide.",
+      "requests": 0,
+      "tokens": 0,
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.061,
+      "first_event_seconds": 0.06
+    }
+  ],
+  "prototype": [
+    {
+      "case": "open_app",
+      "pass": true,
+      "kind": "action",
+      "reply": "Calculator is opening.",
+      "requests": 0,
+      "tokens": 0,
+      "actions": [],
+      "seconds": 0.002,
+      "first_event_seconds": 0.002
+    },
+    {
+      "case": "question",
+      "pass": true,
+      "kind": "answer",
+      "reply": "SQL stands for Structured Query Language, a standard language for querying and managing relational databases.",
+      "requests": 1,
+      "tokens": 540,
+      "actions": [],
+      "seconds": 1.927,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "open_page",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened fixture.example.",
+      "requests": 0,
+      "tokens": 0,
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.002,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "show_and_answer",
+      "pass": true,
+      "kind": "action",
+      "reply": "The deadline is within 37 days.",
+      "requests": 2,
+      "tokens": 1952,
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 2.553,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "correction",
+      "pass": true,
+      "kind": "action",
+      "reply": "Went back to Store help.",
+      "requests": 0,
+      "tokens": 0,
+      "actions": [
+        "https://fixture.example/start"
+      ],
+      "seconds": 0.002,
+      "first_event_seconds": 0.0
+    },
+    {
+      "case": "ordinal",
+      "pass": true,
+      "kind": "action",
+      "reply": "Opened Returns guide.",
+      "requests": 0,
+      "tokens": 0,
+      "actions": [
+        "https://fixture.example/returns"
+      ],
+      "seconds": 0.051,
+      "first_event_seconds": 0.049
+    }
+  ]
+}
