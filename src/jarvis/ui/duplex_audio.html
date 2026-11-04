@@ -1,0 +1,126 @@
+<!doctype html><meta charset="utf-8"><title>Jarvis local audio</title>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+"use strict";
+let bridge, context, stream, input, capture, mute, generation=0, nodes=new Set(), nextTime=0, ended=false, session=0;
+let renderOutput, outgoing, incoming, speaker, relayStream, silenceSource;
+const encode = bytes => btoa(String.fromCharCode(...bytes));
+const normalize = text => text.toLowerCase().replace(/[^a-z0-9]/g, "");
+async function microphoneInput(deviceId) {
+  const options={noiseSuppression:true,autoGainControl:true,channelCount:1};
+  if(deviceId)options.deviceId={exact:deviceId};
+  try {
+    // Boolean true may cancel only remote RTC playback. Our local Kokoro
+    // renderer needs all-output cancellation when supported by this browser.
+    return await navigator.mediaDevices.getUserMedia({audio:{...options,echoCancellation:{exact:"all"}},video:false});
+  } catch(error) {
+    if(error.name!=="OverconstrainedError" && error.name!=="TypeError")throw error;
+    return navigator.mediaDevices.getUserMedia({audio:{...options,echoCancellation:{exact:true}},video:false});
+  }
+}
+async function setupPlayback(settings, speakerId) {
+  if(settings.echoCancellation==="all") {
+    renderOutput=context.destination;
+    if(speakerId && context.setSinkId)await context.setSinkId(speakerId);
+    settings.playbackEchoReference="all-output";
+    return;
+  }
+  // Older Chromium cancels remote-call render audio, but does not reliably
+  // include local WebAudio playback. Both peers live on this computer, use
+  // host ICE only (no STUN/TURN/services), and carry ONLY synthesized output.
+  relayStream=context.createMediaStreamDestination();
+  renderOutput=relayStream;
+  outgoing=new RTCPeerConnection({iceServers:[]});
+  incoming=new RTCPeerConnection({iceServers:[]});
+  const toIncoming=[],toOutgoing=[];
+  outgoing.onicecandidate=e=>{if(e.candidate && incoming){if(incoming.remoteDescription)incoming.addIceCandidate(e.candidate).catch(()=>{});else toIncoming.push(e.candidate);}};
+  incoming.onicecandidate=e=>{if(e.candidate && outgoing){if(outgoing.remoteDescription)outgoing.addIceCandidate(e.candidate).catch(()=>{});else toOutgoing.push(e.candidate);}};
+  speaker=document.createElement("audio");speaker.autoplay=true;
+  document.body.appendChild(speaker);
+  if(speakerId && speaker.setSinkId)await speaker.setSinkId(speakerId);
+  incoming.ontrack=e=>{speaker.srcObject=e.streams[0];speaker.play().catch(error=>bridge.notify("error",error.message));};
+  for(const track of relayStream.stream.getAudioTracks())outgoing.addTrack(track,relayStream.stream);
+  await outgoing.setLocalDescription(await outgoing.createOffer());
+  await incoming.setRemoteDescription(outgoing.localDescription);
+  for(const candidate of toIncoming)await incoming.addIceCandidate(candidate);
+  await incoming.setLocalDescription(await incoming.createAnswer());
+  await outgoing.setRemoteDescription(incoming.localDescription);
+  for(const candidate of toOutgoing)await outgoing.addIceCandidate(candidate);
+  silenceSource=context.createConstantSource();silenceSource.offset.value=0;
+  silenceSource.connect(relayStream);silenceSource.start();
+  const peer=outgoing;
+  await new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>{peer.removeEventListener("connectionstatechange",check);reject(Error("Local echo-reference audio did not connect. Use click-to-talk."));},3000);
+    function check(){if(peer.connectionState==="connected"){clearTimeout(timer);peer.removeEventListener("connectionstatechange",check);resolve();}}
+    peer.addEventListener("connectionstatechange",check);check();
+  });
+  settings.playbackEchoReference="local-rtc";
+}
+async function start(micLabel, speakerLabel) {
+  const ticket=++session;
+  try {
+    await stopMic(false);
+    context ||= new AudioContext({latencyHint:"interactive"});
+    await context.resume();
+    let acquired=await microphoneInput();
+    if(ticket!==session){acquired.getTracks().forEach(t=>t.stop());return;}
+    const devices=await navigator.mediaDevices.enumerateDevices();
+    const find=(kind,label)=>devices.find(d=>d.kind===kind && d.deviceId!=="communications" && normalize(d.label).includes(normalize(label)));
+    const mic=find("audioinput",micLabel);
+    if(mic && acquired.getAudioTracks()[0].getSettings().deviceId!==mic.deviceId){
+      acquired.getTracks().forEach(t=>t.stop());
+      acquired=await microphoneInput(mic.deviceId);
+    }
+    if(ticket!==session){acquired.getTracks().forEach(t=>t.stop());return;}
+    stream=acquired;
+    const settings=stream.getAudioTracks()[0].getSettings();
+    if(settings.echoCancellation!==true && settings.echoCancellation!=="all")throw Error("Echo cancellation is unavailable on this microphone. Use click-to-talk.");
+    const speaker=find("audiooutput",speakerLabel);
+    await setupPlayback(settings,speaker?.deviceId);
+    if(ticket!==session){acquired.getTracks().forEach(t=>t.stop());return;}
+    const worklet=`class Capture extends AudioWorkletProcessor {
+      constructor(){super();this.buffer=new Int16Array(960);this.offset=0;}
+      process(inputs){const samples=inputs[0]?.[0];if(samples)for(const sample of samples){
+        this.buffer[this.offset++]=Math.max(-32768,Math.min(32767,Math.round(sample*32768)));
+        if(this.offset===960){this.port.postMessage(this.buffer.buffer,[this.buffer.buffer]);this.buffer=new Int16Array(960);this.offset=0;}
+      }return true;}
+    }registerProcessor('jarvis-capture',Capture);`;
+    const moduleURL=URL.createObjectURL(new Blob([worklet],{type:"application/javascript"}));
+    if(!context._jarvisWorklet){await context.audioWorklet.addModule(moduleURL);context._jarvisWorklet=true;}
+    URL.revokeObjectURL(moduleURL);
+    input=context.createMediaStreamSource(stream);
+    capture=new AudioWorkletNode(context,"jarvis-capture");
+    capture.port.onmessage=e=>{if(stream && ticket===session)bridge.pcm(encode(new Uint8Array(e.data)),context.sampleRate);};
+    mute=context.createGain();mute.gain.value=0;
+    input.connect(capture).connect(mute).connect(context.destination);
+    bridge.notify("listening",JSON.stringify(settings));
+  }catch(error){await stopMic(false);bridge.notify("error",String(error.message||error));}
+}
+async function stopMic(invalidate=true){
+  if(invalidate)session++;
+  if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;
+  if(input)input.disconnect();if(capture)capture.disconnect();if(mute)mute.disconnect();
+  input=capture=mute=null;
+  if(outgoing)outgoing.close();if(incoming)incoming.close();outgoing=incoming=null;
+  if(speaker){speaker.pause();speaker.srcObject=null;speaker.remove();speaker=null;}
+  if(silenceSource){try{silenceSource.stop();}catch{}silenceSource.disconnect();silenceSource=null;}
+  if(relayStream)relayStream.stream.getTracks().forEach(t=>t.stop());relayStream=null;
+  renderOutput=context?.destination;
+}
+function stopAudio(epoch){generation=epoch;ended=false;nextTime=0;for(const node of nodes){node.onended=null;try{node.stop();}catch{}}nodes.clear();if(speaker)speaker.pause();}
+function drain(epoch){if(ended && !nodes.size && generation===epoch){ended=false;bridge.notify("played",String(epoch));}}
+function push(encoded,epoch){
+  if(!context || epoch<generation)return;
+  if(epoch!==generation)stopAudio(epoch);
+  if(speaker && speaker.paused)speaker.play().catch(error=>bridge.notify("error",error.message));
+  const raw=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
+  const pcm=new Int16Array(raw.buffer), audio=context.createBuffer(1,pcm.length,24000);
+  const data=audio.getChannelData(0);for(let i=0;i<pcm.length;i++)data[i]=pcm[i]/32768;
+  const source=context.createBufferSource();source.buffer=audio;source.connect(renderOutput||context.destination);nodes.add(source);
+  source.onended=()=>{nodes.delete(source);drain(epoch);};
+  const when=Math.max(context.currentTime+0.015,nextTime);source.start(when);nextTime=when+audio.duration;
+}
+function finish(epoch){if(epoch===generation){ended=true;drain(epoch);}}
+window.jarvisAudio={start,stopMic,stopAudio,push,finish};
+new QWebChannel(qt.webChannelTransport,channel=>{bridge=channel.objects.audio;bridge.notify("boot","");});
+</script>

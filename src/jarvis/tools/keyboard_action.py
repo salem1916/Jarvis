@@ -207,6 +207,10 @@ class KeyboardActionTool(Tool):
                     "escape",
                     "tab",
                     "close_tab",
+                    "focus_address_bar",
+                    "browser_back",
+                    "page_down",
+                    "page_up",
                 ],
                 "description": (
                     "Trusted keyboard action to perform."
@@ -236,6 +240,10 @@ class KeyboardActionTool(Tool):
             tuple[int, ...],
         ]
     ] = {
+        "focus_address_bar": (win32con.VK_CONTROL, ord("L")),
+        "browser_back": (win32con.VK_MENU, win32con.VK_LEFT),
+        "page_down": (win32con.VK_NEXT,),
+        "page_up": (win32con.VK_PRIOR,),
         "select_all": (
             win32con.VK_CONTROL,
             ord("A"),

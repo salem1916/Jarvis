@@ -1,8 +1,13 @@
+import time
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol
 
+import pywintypes
+import win32api
 import win32con
 import win32gui
+import win32process
 
 
 def _normalize_window_title(
@@ -148,13 +153,44 @@ class Win32WindowBackend:
                 win32con.SW_RESTORE,
             )
 
-        win32gui.BringWindowToTop(
-            handle
-        )
+        if win32gui.GetForegroundWindow() == handle:
+            return
+        try:
+            win32gui.BringWindowToTop(handle)
+            win32gui.SetForegroundWindow(handle)
+            self._wait_for_focus(handle)
+        except pywintypes.error:
+            pass
+        if win32gui.GetForegroundWindow() != handle:
+            # Hands-free operation can leave the browser owning foreground
+            # input. Temporarily join its input queue for this requested focus
+            # operation; always detach and never send guessed keys.
+            foreground = win32gui.GetForegroundWindow()
+            foreground_thread = win32process.GetWindowThreadProcessId(foreground)[0]
+            current_thread = win32api.GetCurrentThreadId()
+            attached = current_thread != foreground_thread
+            try:
+                if attached:
+                    win32process.AttachThreadInput(current_thread, foreground_thread, True)
+                win32gui.BringWindowToTop(handle)
+                win32gui.SetForegroundWindow(handle)
+                self._wait_for_focus(handle)
+            finally:
+                if attached:
+                    with suppress(pywintypes.error):
+                        win32process.AttachThreadInput(current_thread, foreground_thread, False)
+        if win32gui.GetForegroundWindow() != handle:
+            raise ValueError("Windows did not focus the requested app. No keyboard or mouse input was sent.")
 
-        win32gui.SetForegroundWindow(
-            handle
-        )
+    @staticmethod
+    def _wait_for_focus(handle: int) -> None:
+        # Foreground activation is asynchronous across Windows input queues.
+        # A successful API return is not yet proof that keystrokes have a target.
+        from jarvis.core.request_control import check_cancelled
+        deadline = time.monotonic() + 0.4
+        while win32gui.GetForegroundWindow() != handle and time.monotonic() < deadline:
+            check_cancelled()
+            time.sleep(0.01)
 
     def minimize(
         self,

@@ -9,7 +9,7 @@ from jarvis.tools.base import Tool
 
 class OpenUrlTool(Tool):
     """
-    Open a safe HTTP or HTTPS URL in the user's default browser.
+    Open a safe HTTP or HTTPS URL in the configured browser.
 
     This tool deliberately rejects:
 
@@ -25,7 +25,7 @@ class OpenUrlTool(Tool):
     name = "open_url"
 
     description = (
-        "Open an HTTP or HTTPS website in the user's default "
+        "Open an HTTP or HTTPS website in the configured "
         "browser. Use this for websites and URLs, not installed "
         "Windows applications."
     )
@@ -55,7 +55,7 @@ class OpenUrlTool(Tool):
 
     def __init__(
         self,
-        opener: Callable[[str], bool] | None = None,
+        opener: Callable[[str], bool | Mapping[str, object]] | None = None,
     ) -> None:
         self._opener = (
             opener
@@ -137,10 +137,13 @@ class OpenUrlTool(Tool):
                 "Could not open the URL."
             ) from exc
 
-        if not opened:
+        if not opened or (isinstance(opened, Mapping) and not opened.get("ok", False)):
             raise OSError(
-                "The default browser refused to open the URL."
+                "The configured browser refused to open the URL."
             )
+
+        if isinstance(opened, Mapping):
+            return {**opened, "action": "url_opened"}
 
         return {
             "ok": True,

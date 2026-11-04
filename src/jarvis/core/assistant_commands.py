@@ -35,12 +35,20 @@ def assistant_command(app: JarvisApplication, prompt: str) -> str | None:
         # Discard an old prompt that may still contain the forgotten preference.
         app.conversation.clear()
         return "Memory removed." if removed else "No memory with that exact name. Use 'show memory'."
+    if lowered in {"show updates", "any updates", "what have you prepared"}:
+        app.assistant_inbox.collect(app.agent_team.jobs())
+        updates = app.assistant_inbox.updates()
+        return ("\n".join(f"{u.title} | {u.state}" for u in updates[:10])
+                + "\nOpen Updates to review drafts; reviewing does not apply changes.") if updates else "No background updates yet. Assign work in Tasks."
+    if lowered in {"quiet mode on", "quiet mode off"}:
+        app.assistant_inbox.set_quiet(lowered.endswith("on"))
+        return "Quiet mode enabled. Updates stay in the inbox." if app.assistant_inbox.quiet() else "Quiet mode disabled. New background results can show an in-app notice."
     if lowered in {"agents", "list agents"}:
         return "\n".join(f"{a.name} → {a.backend}" for a in app.agent_team.agents())
-    match = re.fullmatch(r"assign\s+([\w-]+)\s+to\s+(local|chatgpt|hermes)", text, re.IGNORECASE)
+    match = re.fullmatch(r"assign\s+([\w-]+)\s+to\s+(local|chatgpt|hermes|plan|groq|gemini|openrouter_free)", text, re.IGNORECASE)
     if match:
         backend = match[2].casefold()
-        if backend not in {"local", "chatgpt", "hermes"}:
+        if backend not in {"local", "chatgpt", "hermes", "plan", "groq", "gemini", "openrouter_free"}:
             return None
         app.agent_team.configure(WorkerDefinition(match[1], backend))  # type: ignore[arg-type]
         return f"Agent {match[1]} now uses {backend}. Delegate with: delegate to {match[1]}: your task"

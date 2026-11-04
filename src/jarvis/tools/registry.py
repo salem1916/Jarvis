@@ -21,4 +21,4 @@ class ToolRegistry:
         return tuple(self._tools)
 
     def tools(self) -> tuple[Tool, ...]:
-        return tuple(self._tools.values())
+        return tuple(tool for tool in self._tools.values() if not tool.internal_only)

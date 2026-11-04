@@ -2,6 +2,7 @@ import re
 from typing import ClassVar
 from urllib.parse import urlsplit
 
+from jarvis.core.browser_commands import browser_search
 from jarvis.core.tool_request import ToolRequest
 
 
@@ -20,7 +21,7 @@ class FastCommandRouter:
         r"(?:open|launch|visit|browse(?:\s+to)?|go\s+to)\s+"
         r"(.+?)"
         r"(?:\s+please)?"
-        r"[.!]?$",
+        r"[.!?]?$",
         re.IGNORECASE,
     )
 
@@ -68,6 +69,7 @@ class FastCommandRouter:
     def route(
         self,
         prompt: str,
+        last_url: str = "",
     ) -> ToolRequest | None:
         """
         Convert one simple command into a trusted ToolRequest.
@@ -85,6 +87,21 @@ class FastCommandRouter:
         if not normalized:
             return None
 
+        search = browser_search(normalized, last_url)
+        if search is not None:
+            return search
+
+        return self.open_request(normalized)
+
+    def open_request(self, prompt: str) -> ToolRequest | None:
+        """Recognize an explicit opening, including a repeated spoken correction."""
+        normalized = " ".join(prompt.split())
+        correction = re.fullmatch(r"(.*?)\bi (?:just )?(?:told|asked) you to (.+)", normalized, re.IGNORECASE)
+        if correction:
+            command = self._OPEN_TARGET_PATTERN.fullmatch(correction[2])
+            prefix = [part.strip().casefold() for part in re.split(r"[,!.]+", correction[1]) if part.strip()]
+            if command and all(part in {command[1].casefold(), "no", "actually"} for part in prefix):
+                normalized = correction[2]
         lowered = normalized.casefold()
 
         # Polite requests for one explicit action still use the zero-model path.

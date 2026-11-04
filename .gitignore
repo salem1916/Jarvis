@@ -4,6 +4,10 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.voice-venv/
+.windows-venv/
+.cache/
+.voice-models/
 
 # Testing / tooling
 .pytest_cache/
@@ -23,3 +27,26 @@ Thumbs.db
 .DS_Store
 # JARVIS runtime workspace
 workspace/
+
+# Local encrypted connections and personal memory
+*.dpapi
+personal_memory.sqlite3*
+
+.browsers/
+
+.mcp/node_modules/
+.mcp/output/
+.mcp/server.log
+.mcp/*-server.log
+
+.mcp/browser-config.json
+
+# Local exports and scratch snapshots
+/jarvis-current-src-tests.zip
+/desktop_current.txt
+/model_hub_current.txt
+/provider_wiring_current.txt
+/src/jarvis/agents/hermes.pycode
+/app
+/first_app
+/return

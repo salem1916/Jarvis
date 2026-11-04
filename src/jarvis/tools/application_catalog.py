@@ -42,6 +42,10 @@ class ApplicationEntry:
     source: str
 
 
+class ApplicationNotFoundError(ValueError):
+    """A name did not match any installed application."""
+
+
 class ApplicationCatalog:
     """
     Discover applications from trusted Windows locations.
@@ -324,6 +328,11 @@ class ApplicationCatalog:
             normalized,
         )
 
+        # Built-ins need no Start Menu traversal, useful for instant voice commands.
+        builtins: dict[str, ApplicationEntry] = {}
+        self._add_builtin_applications(builtins)
+        if normalized in builtins:
+            return builtins[normalized]
         entries = self.entries()
 
         # -------------------------------------------------
@@ -372,7 +381,7 @@ class ApplicationCatalog:
                 f"Matches: {match_names}."
             )
 
-        raise ValueError(
+        raise ApplicationNotFoundError(
             "No installed application matched "
             f"'{requested_name}'. "
             "Use list_applications to discover the "

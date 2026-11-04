@@ -239,9 +239,9 @@ class ModelsPage(QWidget):
         )
 
         mode_help = QLabel(
-            "Auto will eventually choose models using privacy, "
-            "latency, cost, capabilities and task difficulty. "
-            "Local Only prevents cloud routing."
+            "Smart prefers available cloud reasoning; Local Only keeps AI requests on this PC. "
+            "The search website comes from your request, such as YouTube for a video. "
+            "Your conversation context stays with you when you change modes."
         )
 
         mode_help.setObjectName(

@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from json import JSONDecodeError
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -14,6 +15,7 @@ from jarvis.core.action_confirmation import (
     ActionConfirmationHandler,
 )
 from jarvis.core.conversation import Conversation
+from jarvis.core.request_control import RequestControl, current_control
 from jarvis.models.base import ModelMessage
 from jarvis.tools.service import ToolService
 
@@ -534,15 +536,14 @@ class HermesAgentEngine(AgentEngine):
                 ] = self.api_key
 
         try:
-            completed = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                shell=False,
-                env=environment,
-            )
+            control = current_control()
+            if control is not None:
+                completed = self._cancellable_process(command, environment, control)
+            else:
+                completed = subprocess.run(
+                    command, check=False, capture_output=True, text=True,
+                    timeout=self.timeout, shell=False, env=environment,
+                )
 
         except subprocess.TimeoutExpired as exc:
             raise HermesAgentError(
@@ -575,6 +576,33 @@ class HermesAgentEngine(AgentEngine):
             )
 
         return stdout
+
+    def _cancellable_process(self, command: list[str], environment: dict[str, str] | None,
+                             control: RequestControl) -> subprocess.CompletedProcess[str]:
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            shell=False, env=environment,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        started = time.monotonic()
+        try:
+            while True:
+                control.check()
+                if time.monotonic() - started > self.timeout:
+                    raise subprocess.TimeoutExpired(command, self.timeout)
+                try:
+                    stdout, stderr = process.communicate(timeout=0.1)
+                    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
 
     @staticmethod
     def _build_prompt(

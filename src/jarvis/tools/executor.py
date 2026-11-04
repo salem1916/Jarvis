@@ -1,5 +1,7 @@
 from collections.abc import Mapping
 
+from jarvis.core.interaction import action_event
+from jarvis.core.request_control import check_cancelled, report_event
 from jarvis.security.policy import (
     PermissionDecision,
     PermissionPolicy,
@@ -62,9 +64,14 @@ class ToolExecutor:
             Execute normally.
         """
 
+        check_cancelled()
         decision = self.policy.evaluate(
             tool.required_capability
         )
+        extras = [(cap,self.policy.evaluate(cap)) for cap in tool.additional_capabilities]
+        for capability, extra in extras:
+            if extra is PermissionDecision.DENY:
+                raise PermissionDeniedError(f"Permission denied for capability: {capability}")
 
         # A confirmation can NEVER override DENY.
         if decision is PermissionDecision.DENY:
@@ -72,6 +79,11 @@ class ToolExecutor:
                 "Permission denied for capability: "
                 f"{tool.required_capability}"
             )
+
+        if not confirmed:
+            for capability, extra in extras:
+                if extra is PermissionDecision.REQUIRE_CONFIRMATION:
+                    raise ConfirmationRequiredError(f"Confirmation required for capability: {capability}")
 
         if (
             decision
@@ -83,6 +95,7 @@ class ToolExecutor:
                 f"{tool.required_capability}"
             )
 
+        report_event(action_event(tool.name, arguments))
         return tool.execute(
             arguments
         )

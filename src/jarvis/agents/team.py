@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from jarvis.core.personal_memory import PersonalMemory
 
-Backend = Literal["local", "chatgpt", "hermes"]
+Backend = Literal["local", "chatgpt", "hermes", "plan", "groq", "gemini", "openrouter_free"]
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,10 @@ class AgentTeam:
             "local": WorkerDefinition("local", "local"),
             "chatgpt": WorkerDefinition("chatgpt", "chatgpt"),
             "hermes": WorkerDefinition("hermes", "hermes"),
+            "plan": WorkerDefinition("plan", "plan"),
+            "groq": WorkerDefinition("groq", "groq"),
+            "gemini": WorkerDefinition("gemini", "gemini"),
+            "free": WorkerDefinition("free", "openrouter_free"),
         }
         for raw in memory.records("agent"):
             self._agents[str(raw["name"])] = WorkerDefinition(**raw)  # type: ignore[arg-type]
@@ -70,8 +74,8 @@ class AgentTeam:
         name = agent.name.strip().casefold()
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", name):
             raise ValueError("Agent names must start with a letter and use up to 40 letters, numbers, _ or -.")
-        if agent.backend not in {"local", "chatgpt", "hermes"}:
-            raise ValueError("Choose local, chatgpt, or hermes.")
+        if agent.backend not in {"local", "chatgpt", "hermes", "plan", "groq", "gemini", "openrouter_free"}:
+            raise ValueError("Choose a supported agent connection.")
         if agent.backend == "hermes" and agent.model:
             raise ValueError("Configure the Hermes model in Hermes itself; leave the override empty.")
         agent = replace(agent, name=name)

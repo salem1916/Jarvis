@@ -1,3 +1,5 @@
+from jarvis.core.interaction import action_event
+from jarvis.core.request_control import report_event
 from jarvis.core.tool_request import ToolRequest
 from jarvis.tools.executor import ToolExecutor
 from jarvis.tools.registry import ToolRegistry
@@ -49,8 +51,11 @@ class ToolService:
             request.tool_name
         )
 
-        return self.executor.execute(
+        result = self.executor.execute(
             tool,
             request.arguments,
             confirmed=confirmed,
         )
+        if result is not None and (not isinstance(result, dict) or result.get("ok", True)):
+            report_event(action_event(request.tool_name, request.arguments, result))
+        return result

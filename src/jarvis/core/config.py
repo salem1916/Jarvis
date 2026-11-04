@@ -89,6 +89,7 @@ class JarvisSettings(BaseSettings):
     # Intended primarily as JARVIS's very-fast hosted
     # inference option.
     groq_api_key: str | None = None
+    gemini_api_key: str | None = None
 
     groq_base_url: str = (
         "https://api.groq.com/openai/v1"

@@ -14,6 +14,7 @@ from jarvis.models.ollama_discovery import OllamaDiscoveryService
 from jarvis.models.openai_compatible import OpenAICompatibleProvider
 from jarvis.models.provider_hub import register_provider_hub
 from jarvis.models.provider_registry import ProviderRegistry
+from jarvis.runtime.intelligence import IntelligenceHub
 from jarvis.runtime.model_manager import ModelManager
 from jarvis.runtime.profile import (
     ModelRole,
@@ -30,6 +31,12 @@ from jarvis.security.policy import (
     PermissionPolicy,
 )
 from jarvis.tools.application_catalog import ApplicationCatalog
+from jarvis.tools.browser_mcp import (
+    BrowserClickTool,
+    BrowserKeyTool,
+    BrowserMCPTool,
+    BrowserTypeTool,
+)
 from jarvis.tools.calculator import CalculatorTool
 from jarvis.tools.click_ui_element import ClickUiElementTool
 from jarvis.tools.close_window import (
@@ -51,6 +58,7 @@ from jarvis.tools.open_application import OpenApplicationTool
 from jarvis.tools.open_url import OpenUrlTool
 from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
+from jarvis.tools.screen_observation import ScreenObservationTool
 from jarvis.tools.service import ToolService
 from jarvis.tools.system_info import SystemInfoTool
 from jarvis.tools.trash_file import TrashFileTool
@@ -62,9 +70,17 @@ from jarvis.tools.ui_automation import (
     PywinautoUiAutomationBackend,
     UiElementCatalog,
 )
+from jarvis.tools.web_research import WebResearchTool
 from jarvis.tools.window_catalog import (
     Win32WindowBackend,
     WindowCatalog,
+)
+from jarvis.tools.windows_mcp import (
+    WindowsClickTool,
+    WindowsMCP,
+    WindowsScrollTool,
+    WindowsSnapshotTool,
+    WindowsTypeTool,
 )
 from jarvis.tools.write_file import WriteFileTool
 
@@ -560,9 +576,21 @@ def build_application(
     # BROWSER
     # -------------------------------------------------
 
-    registry.register(
-        OpenUrlTool()
-    )
+    browser = BrowserMCPTool()
+    def open_browser_url(url):
+        # Opening and subsequent reading/clicking must share one tab owner.
+        # Returning the observation preserves redirects and verified page titles.
+        return browser.execute({"action":"navigate","url":url})
+    registry.register(OpenUrlTool(opener=open_browser_url))
+    registry.register(WebResearchTool())
+    registry.register(browser)
+    for browser_tool in (BrowserClickTool(browser),BrowserTypeTool(browser),BrowserKeyTool(browser)):
+        registry.register(browser_tool)
+    screen = ScreenObservationTool()
+    registry.register(screen)
+    windows = WindowsMCP(screen)
+    for windows_tool in (WindowsSnapshotTool(windows),WindowsClickTool(windows),WindowsTypeTool(windows),WindowsScrollTool(windows)):
+        registry.register(windows_tool)
 
     # -------------------------------------------------
     # WINDOWS
@@ -691,15 +719,18 @@ def build_application(
         else ActionMemory()
     )
 
+    personal_memory = PersonalMemory(
+        settings.state_dir / "personal_memory.sqlite3"
+        if settings.persist_personal_memory else None
+    )
+
     return JarvisApplication(
         tool_service=tool_service,
         model_provider=model_provider,
         model_manager=model_manager,
         action_memory=action_memory,
-        personal_memory=PersonalMemory(
-            settings.state_dir / "personal_memory.sqlite3"
-            if settings.persist_personal_memory else None
-        ),
+        personal_memory=personal_memory,
+        intelligence=IntelligenceHub(settings, personal_memory),
         cloud_provider=(
             model_provider if model_provider.name == "openai" else OpenAICompatibleProvider(
                 provider_name="openai", model=settings.openai_model,

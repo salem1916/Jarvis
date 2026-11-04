@@ -7,6 +7,7 @@ from jarvis.core.action_confirmation import (
     ActionDeclinedError,
 )
 from jarvis.core.conversation import Conversation
+from jarvis.core.request_control import check_cancelled
 from jarvis.core.tool_request import ToolRequest
 from jarvis.models.base import (
     ModelMessage,
@@ -288,6 +289,7 @@ class AgentService:
         completion_feedback: str | None = None
 
         while True:
+            check_cancelled()
             response = self.model_provider.generate(
                 ModelRequest(
                     prompt=prompt,
@@ -379,12 +381,15 @@ class AgentService:
                 )
 
             for tool_call in response.tool_calls:
+                check_cancelled()
                 request = ToolRequest(
                     tool_name=tool_call.name,
                     arguments=tool_call.arguments,
                 )
 
                 try:
+                    if tool_call.name not in {tool.name for tool in available_tools}:
+                        raise ValueError("Unavailable tool. Use only these tool names: " + ", ".join(t.name for t in available_tools))
                     result = self._execute_tool_request(
                         request=request,
                         confirmation_handler=confirmation_handler,
@@ -457,6 +462,7 @@ class AgentService:
                 # =============================================
 
                 except (
+                    KeyError,
                     OSError,
                     TypeError,
                     ValueError,

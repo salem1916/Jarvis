@@ -14,6 +14,7 @@ from jarvis.core.action_confirmation import (
     ActionConfirmationRequest,
     ActionDeclinedError,
 )
+from jarvis.core.request_control import current_control, request_scope
 from jarvis.core.tool_request import ToolRequest
 from jarvis.tools.executor import (
     ConfirmationRequiredError,
@@ -110,6 +111,7 @@ class JarvisHermesBridge:
         ) = None,
     ) -> None:
         self.tool_service = tool_service
+        self.request_control = current_control()
 
         self.confirmation_handler = (
             confirmation_handler
@@ -307,6 +309,14 @@ class JarvisHermesBridge:
         return definitions
 
     def execute(
+        self, tool_name: str, arguments: dict[str, object],
+    ) -> object:
+        if self.request_control is not None:
+            with request_scope(self.request_control):
+                return self._execute(tool_name, arguments)
+        return self._execute(tool_name, arguments)
+
+    def _execute(
         self,
         tool_name: str,
         arguments: dict[

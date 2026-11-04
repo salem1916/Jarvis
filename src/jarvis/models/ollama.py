@@ -54,6 +54,11 @@ class OllamaProvider(ModelProvider):
         messages = self._build_messages(
             request
         )
+        if request.images:
+            user = next((message for message in reversed(messages) if message.get("role") == "user"), None)
+            if user is None:
+                raise ValueError("A screenshot requires a user message.")
+            user["images"] = request.images
 
         payload: dict[str, object] = {
             "model": self.model,
@@ -66,6 +71,10 @@ class OllamaProvider(ModelProvider):
             # Avoid reloading the model for every request.
             "keep_alive": "10m",
         }
+
+        # Convert JARVIS's generic tool definitions into
+        if request.json_output:
+            payload["format"] = "json"
 
         # Convert JARVIS's generic tool definitions into
         # Ollama's function-calling format.

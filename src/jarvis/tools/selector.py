@@ -68,6 +68,8 @@ class ToolSelector:
             return self.registry.tools()
 
         selected_names: set[str] = set()
+        if re.search(r"\b(search|google|bing|website|webpage|url)\b", normalized):
+            selected_names.add("open_url")
 
         file_context = self._has_file_context(
             normalized
@@ -387,6 +389,7 @@ class ToolSelector:
         refer to filesystem content rather than applications.
         """
 
+        normalized = re.sub(r"https?://[^\s]+", "", normalized)
         if re.search(
             (
                 r"\b("

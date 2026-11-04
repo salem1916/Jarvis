@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -26,39 +27,46 @@ class TasksPage(QWidget):
         super().__init__()
         self.jarvis = jarvis
         self._snapshot: object = None
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self);outer.setContentsMargins(0,0,0,0)
+        scroll = QScrollArea();scroll.setWidgetResizable(True);scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget();scroll.setWidget(content);outer.addWidget(scroll)
+        layout = QVBoxLayout(content);layout.setContentsMargins(24,24,24,24);layout.setSpacing(14)
         title = QLabel("Agent team")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
         description = QLabel(
-            "Assign independent tasks to local models, the OpenAI API, or Hermes. "
-            "Up to three jobs run together. Workers draft and reason; PC actions stay in Chat."
+            "Assign independent tasks to your connected models or Hermes. "
+            "Up to three jobs run together. Completed drafts appear in Updates for review. PC actions stay in Chat."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
-        connection = QLabel(
-            "OpenAI: configured. Models can be overridden per agent." if jarvis.cloud_provider else
-            "OpenAI: API key missing. Add JARVIS_OPENAI_API_KEY to .env locally, then restart."
-        )
+        connection = QLabel("Connect providers in Settings. ChatGPT plan usage and OpenAI API billing are separate choices.")
         connection.setWordWrap(True)
         layout.addWidget(connection)
+        configure = QPushButton("Configure agents")
+        configure.setCheckable(True)
+        layout.addWidget(configure)
+        configuration = QWidget();configuration.hide()
+        configure.toggled.connect(configuration.setVisible)
+        config_layout = QVBoxLayout(configuration);config_layout.setContentsMargins(0,8,0,8)
+        layout.addWidget(configuration)
         row = QHBoxLayout()
         self.agent_name = QLineEdit()
         self.agent_name.setPlaceholderText("Agent name, e.g. coder")
         self.backend = QComboBox()
-        self.backend.addItems(["chatgpt", "local", "hermes"])
+        self.backend.addItems(["plan", "groq", "gemini", "openrouter_free", "chatgpt", "local", "hermes"])
         self.model = QLineEdit()
-        self.model.setPlaceholderText("Model override (optional; Local / OpenAI)")
+        self.model.setPlaceholderText("Model override (optional)")
         row.addWidget(self.agent_name)
         row.addWidget(self.backend)
         row.addWidget(self.model)
-        layout.addLayout(row)
+        config_layout.addLayout(row)
         self.instructions = QLineEdit()
         self.instructions.setPlaceholderText("Worker instructions, e.g. explain Java clearly and include examples")
-        layout.addWidget(self.instructions)
+        config_layout.addWidget(self.instructions)
         save = QPushButton("Save agent")
         save.clicked.connect(self._save_agent)
-        layout.addWidget(save)
+        config_layout.addWidget(save)
         row = QHBoxLayout()
         self.agent = QComboBox()
         self.agent.currentTextChanged.connect(self._load_agent)
@@ -81,6 +89,7 @@ class TasksPage(QWidget):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.table = QTableWidget(0, 4)
+        self.table.setMinimumHeight(180)
         self.table.setHorizontalHeaderLabels(["Task", "Agent", "Status", "Assignment"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -88,6 +97,7 @@ class TasksPage(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table, 1)
         self.result = QPlainTextEdit()
+        self.result.setMinimumHeight(120)
         self.result.setReadOnly(True)
         self.result.setPlaceholderText("Select a task to read its result. Completed tasks survive restarts.")
         layout.addWidget(self.result, 1)

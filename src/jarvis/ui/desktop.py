@@ -1,14 +1,18 @@
 import sys
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
+    QTableWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -19,14 +23,16 @@ from jarvis.core.config import (
     load_settings,
 )
 from jarvis.core.system_prompt import build_system_prompt
-from jarvis.runtime.profile import ModelRole
+from jarvis.runtime.profile import ModelRole, RuntimeMode
+from jarvis.ui.appearance import stylesheet_for
 from jarvis.ui.pages.chat_page import ChatPage
 from jarvis.ui.pages.memory_page import MemoryPage
-from jarvis.ui.pages.models_page import ModelsPage
 from jarvis.ui.pages.permissions_page import PermissionsPage
 from jarvis.ui.pages.placeholder_page import PlaceholderPage
+from jarvis.ui.pages.provider_assistant_page import ProviderAssistantPage
+from jarvis.ui.pages.settings_page import SettingsPage
 from jarvis.ui.pages.tasks_page import TasksPage
-from jarvis.ui.theme import APP_STYLESHEET
+from jarvis.ui.pages.updates_page import UpdatesPage
 
 
 class JarvisWindow(QMainWindow):
@@ -49,6 +55,8 @@ class JarvisWindow(QMainWindow):
     MODELS_PAGE = 3
     SETTINGS_PAGE = 4
     LOGS_PAGE = 5
+    PROVIDERS_PAGE = 6
+    UPDATES_PAGE = 7
 
     def __init__(self) -> None:
         super().__init__()
@@ -90,13 +98,21 @@ class JarvisWindow(QMainWindow):
             600,
         )
 
-        self.setStyleSheet(
-            APP_STYLESHEET
-        )
+        theme = self.jarvis.intelligence.preferences().get("theme", "dark") if self.jarvis.intelligence else "dark"
+        self.setStyleSheet(stylesheet_for(theme))
 
         self._build_interface()
 
         self._refresh_runtime_sidebar()
+        self.chat_page.open_main_requested.connect(self._open_from_companion)
+        self.chat_page.desktop_button.setChecked(True)
+
+    def _open_from_companion(self):
+        self._navigate_to(self.CHAT_PAGE)
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self.chat_page.input_box.setFocus()
 
     def _build_interface(self) -> None:
         """
@@ -135,7 +151,7 @@ class JarvisWindow(QMainWindow):
         )
 
         sidebar.setFixedWidth(
-            230
+            196
         )
 
         sidebar_layout = QVBoxLayout(
@@ -166,7 +182,7 @@ class JarvisWindow(QMainWindow):
         )
 
         subtitle = QLabel(
-            "Personal AI System"
+            "Personal assistant"
         )
 
         subtitle.setObjectName(
@@ -186,7 +202,7 @@ class JarvisWindow(QMainWindow):
         # -------------------------------------------------
 
         self.new_chat_button = QPushButton(
-            "+ New Chat"
+            "+ New conversation"
         )
 
         self.new_chat_button.clicked.connect(
@@ -215,7 +231,7 @@ class JarvisWindow(QMainWindow):
 
         self._add_navigation_button(
             sidebar_layout,
-            "Chat",
+            "Assistant",
             self.CHAT_PAGE,
             checked=True,
         )
@@ -225,6 +241,8 @@ class JarvisWindow(QMainWindow):
             "Tasks",
             self.TASKS_PAGE,
         )
+        self._add_navigation_button(sidebar_layout, "API assistant", self.PROVIDERS_PAGE)
+        self._add_navigation_button(sidebar_layout, "Updates", self.UPDATES_PAGE)
 
         self._add_navigation_button(
             sidebar_layout,
@@ -234,7 +252,7 @@ class JarvisWindow(QMainWindow):
 
         self._add_navigation_button(
             sidebar_layout,
-            "Models",
+            "Settings",
             self.MODELS_PAGE,
         )
 
@@ -361,7 +379,7 @@ class JarvisWindow(QMainWindow):
         )
 
         version = QLabel(
-            "JARVIS Core v0.1"
+            "Your personal workspace"
         )
 
         version.setObjectName(
@@ -371,6 +389,9 @@ class JarvisWindow(QMainWindow):
         sidebar_layout.addWidget(
             version
         )
+        for item in (model_heading,self.model_label,provider_heading,self.provider_label,
+                     agent_heading,self.agent_label,mode_heading,self.mode_label,self.message_count_label):
+            item.hide()
 
         root_layout.addWidget(
             sidebar
@@ -397,11 +418,12 @@ class JarvisWindow(QMainWindow):
             jarvis=self.jarvis,
         )
 
-        self.models_page = ModelsPage(
+        self.models_page = SettingsPage(
             jarvis=self.jarvis,
         )
 
         self.settings_page = MemoryPage(self.jarvis)
+        self.provider_assistant_page = ProviderAssistantPage(self.jarvis)
 
         self.logs_page = PlaceholderPage(
             title="Logs",
@@ -435,6 +457,33 @@ class JarvisWindow(QMainWindow):
         self.pages.addWidget(
             self.logs_page
         )
+        self.pages.addWidget(self.provider_assistant_page)
+        self.updates_page = UpdatesPage(self.jarvis)
+        self.pages.addWidget(self.updates_page)
+        self.updates_page.unread_changed.connect(lambda count: self.navigation_group.button(self.UPDATES_PAGE).setText(f"Updates ({count})" if count else "Updates"))
+        self.updates_page.attention.connect(lambda text: self.statusBar().showMessage(text, 12000))
+        self.updates_page.refresh_view()
+        for page in (self.tasks_page,self.permissions_page,self.models_page,self.settings_page,
+                     self.provider_assistant_page,self.updates_page,self.logs_page):
+            page_layout = page.layout()
+            if page_layout:
+                margin = 0 if page in (self.tasks_page,self.updates_page,self.models_page,self.provider_assistant_page) else 24
+                page_layout.setContentsMargins(margin,margin,margin,margin)
+                page_layout.setSpacing(14)
+            for label in page.findChildren(QLabel):
+                label.setWordWrap(True)
+            for combo in page.findChildren(QComboBox):
+                combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+                combo.setMinimumContentsLength(14)
+                combo.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Fixed)
+            for table in page.findChildren(QTableWidget):
+                table.verticalHeader().setDefaultSectionSize(38)
+                table.verticalHeader().hide()
+                table.setAlternatingRowColors(True)
+                table.setShowGrid(False)
+                table.setMinimumHeight(max(140,table.minimumHeight()))
+        self.provider_assistant_page.activated.connect(self._use_approved_provider)
+        self.provider_assistant_page.policy_changed.connect(self._provider_policy_changed)
 
         root_layout.addWidget(
             self.pages,
@@ -453,10 +502,12 @@ class JarvisWindow(QMainWindow):
             self._set_request_busy
         )
         self.chat_page.busy_changed.connect(self.settings_page.setDisabled)
+        self.chat_page.busy_changed.connect(self.models_page.setDisabled)
 
         self.models_page.runtime_changed.connect(
             self._refresh_runtime_sidebar
         )
+        self.models_page.appearance_changed.connect(lambda theme: self.setStyleSheet(stylesheet_for(theme)))
 
     def _add_navigation_button(
         self,
@@ -509,6 +560,9 @@ class JarvisWindow(QMainWindow):
         self.pages.setCurrentIndex(
             page_id
         )
+        button = self.navigation_group.button(page_id)
+        if button is not None:
+            button.setChecked(True)
 
     def _start_new_chat(self) -> None:
         """
@@ -569,6 +623,43 @@ class JarvisWindow(QMainWindow):
         self.mode_label.setText(
             profile.mode.value
         )
+        if self.jarvis.intelligence:
+            preferences = self.jarvis.intelligence.preferences()
+            if (preferences["source"] == "auto" and profile.mode is not RuntimeMode.LOCAL
+                    and (connection := self.jarvis.intelligence.automatic_connection()) is not None):
+                self.provider_label.setText(f"auto → {connection[0]}")
+                self.model_label.setText(connection[1])
+                self.model_label.setWordWrap(True)
+            elif preferences["source"] != "auto":
+                self.provider_label.setText(preferences["source"].replace("_", " "))
+                self.model_label.setText(preferences.get("model") or "Default model")
+                self.model_label.setWordWrap(True)
+
+    def _provider_policy_changed(self) -> None:
+        hub = self.jarvis.intelligence
+        if hub is None:
+            return
+        policy, preferences = hub.steward.policy(), hub.preferences()
+        source = preferences["source"]
+        keep = source == "local" or (source == "chatgpt_plan" and not policy["commercial"])
+        if policy["enabled"] and not keep:
+            try:
+                approval = hub.steward.require_connection(source)
+                keep = bool(approval.get("active") and approval.get("model") == preferences.get("model"))
+            except ValueError:
+                keep = False
+            if not keep:
+                hub.save_preferences("local", "", preferences.get("concise", True), preferences.get("theme", "dark"))
+                self.models_page.source.setCurrentIndex(self.models_page.source.findData("local"))
+                self.models_page.model.setEditText("")
+        self.models_page.refresh_view()
+        self._refresh_runtime_sidebar()
+
+    def _use_approved_provider(self, source: str, model: str) -> None:
+        self.models_page.source.setCurrentIndex(self.models_page.source.findData(source))
+        self.models_page.model.setEditText(model)
+        self.models_page.local_only.setChecked(False)
+        self.models_page._apply()
 
     def _set_message_count(
         self,
@@ -594,6 +685,8 @@ class JarvisWindow(QMainWindow):
         self.new_chat_button.setDisabled(
             busy
         )
+        self.models_page.setDisabled(busy)
+        self.provider_assistant_page.setDisabled(busy)
 
     def closeEvent(
         self,
@@ -606,7 +699,9 @@ class JarvisWindow(QMainWindow):
         Proper cancellation comes later.
         """
 
-        if self.chat_page.request_in_progress or self.jarvis.agent_team.has_active_jobs():
+        if (self.chat_page.request_in_progress or self.chat_page.worker_thread is not None or self.jarvis.agent_team.has_active_jobs()
+                or self.models_page.operation_thread is not None
+                or self.provider_assistant_page.operation_thread is not None):
             self.chat_page.status_label.setText(
                 "Wait for the current chat and agent tasks to finish "
                 "before closing JARVIS."
@@ -622,6 +717,11 @@ class JarvisWindow(QMainWindow):
 
         self.tasks_page.timer.stop()
         self.settings_page.timer.stop()
+        self.provider_assistant_page.timer.stop()
+        self.updates_page.timer.stop()
+        for timer in self.findChildren(QTimer):
+            timer.stop()
+        self.chat_page.shutdown_ui()
         self.jarvis.shutdown()
         event.accept()
 

@@ -55,6 +55,10 @@ class ModelToolCall(BaseModel):
 
     call_id: str | None = None
 
+    # Opaque provider state travels with its original call, never tool arguments.
+    # Only the originating adapter interprets or sends this metadata.
+    provider_metadata: dict[str, object] = Field(default_factory=dict, repr=False)
+
     name: str = Field(
         min_length=1
     )
@@ -133,6 +137,12 @@ class ModelRequest(BaseModel):
     )
 
     system_prompt: str | None = None
+
+    # Ephemeral screenshots for a user-enabled screen session. Never put these
+    # in durable chat history or tool logs. Adapters must send them as images.
+    images: list[str] = Field(default_factory=list, max_length=2, repr=False)
+    json_output: bool = False
+    tool_choice: Literal["auto", "required"] = "auto"
 
     messages: list[
         ModelMessage

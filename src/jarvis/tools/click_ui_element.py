@@ -3,6 +3,7 @@ from typing import ClassVar
 
 from jarvis.security.capabilities import Capability
 from jarvis.tools.base import Tool
+from jarvis.tools.desktop_context import is_jarvis_window
 from jarvis.tools.ui_automation import (
     UiElementCatalog,
     UiElementEntry,
@@ -139,8 +140,7 @@ class ClickUiElementTool(Tool):
         # -------------------------------------------------
 
         if any(
-            "jarvis"
-            in window.title.casefold()
+            is_jarvis_window(window.handle, window.title)
             for window in windows
         ):
             raise ValueError(

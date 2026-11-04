@@ -1,0 +1,17 @@
+# General research integration — replaces the earlier topic-specific fallback
+
+Updated 31 October 2026.
+
+The stock-market-specific source list has been removed. No football, finance, travel, or other topic has a built-in source list. Examples below are regression cases, not runtime routing rules.
+
+The research path is now: full request and recent conversation → model-generated search queries → Tavily keyless search/extraction → model relevance and coverage check → at most one reformulated search → answer from accepted evidence with URLs and retrieval timestamps. Unrelated pages are not passed to the final answer stage. If no relevant evidence survives both attempts, JARVIS reports the blocker instead of answering from unrelated results. This reduces mistakes; model-based intent and relevance checks are not infallible.
+
+Tavily's supported free keyless API is connected directly inside JARVIS. No account, API key, subscription, or paid upgrade was enabled. Its shared allowance is rate-limited. When exhausted or unavailable, JARVIS reports the error; it does not silently enable billing or bypass a search engine's CAPTCHA. Queries go to Tavily, while query planning and evidence analysis use your selected model connection and its quota. At most two searches and up to four logical model requests are needed per research turn. Transient Gemini HTTP 502/503/504 failures can add at most two API attempts across the whole chat request; see the browser setup guide for retry behavior. Existing permission and cancellation handling apply.
+
+Settings now identifies the search service under Web research. Public-source extraction remains separate from browser interaction. The existing isolated Playwright reader can read pages when extraction is missing. A later stage now connects Playwright MCP for isolated navigation, snapshots, observed-link following, and tab listing. See [browser setup](BROWSER_MCP.md); arbitrary clicking, typing, and login automation remain unavailable. Connecting an MCP server is not equivalent to installing its Python library or using a search API.
+
+Relevant tool services are [Tavily MCP](https://docs.tavily.com/documentation/keyless) for search/extraction and [Microsoft Playwright MCP](https://github.com/microsoft/playwright-mcp) for observed browser interaction. These belong in JARVIS's tool layer. Installing a plugin in Codex or ChatGPT alone would not give the separate JARVIS app those tools.
+
+The exact screenshot request about upcoming BVB Dortmund matches completed in a live test in 9.1 seconds and cited an ESPN football fixtures page, instead of the Next retailer. That verifies intent/source selection in this instance; it is not an independent guarantee that every fixture, date, or timezone is correct. The final answer must identify missing time information. Tests also exercise unrelated research domains, rejecting irrelevant results, query reformulation, malformed structured output, permission denial, source citations, and cancellation.
+
+Generic commands such as research your topic, search and summarize your topic, or open Google and check your question enter this research flow. Familiar commands such as open Google still use the fast local action path. This is not universal understanding of every possible instruction or arbitrary browser-task completion. New capabilities should be implemented as reusable tools and connectors, rather than a new domain-specific branch for each example.

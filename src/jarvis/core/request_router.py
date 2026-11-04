@@ -41,6 +41,7 @@ class RouteDecision:
     complexity_score: int
     use_cloud: bool = False
     use_tools: bool = False
+    source: str | None = None
 
 
 class RequestRouter:
@@ -453,6 +454,12 @@ class RequestRouter:
             ),
             complexity_score=complexity_score,
         )
+
+    def complexity(self, prompt: str) -> int:
+        return self._complexity_score(self._normalize(prompt))
+
+    def requires_tools(self, prompt: str) -> bool:
+        return self._requires_trusted_windows_tools(prompt) or self._requires_local_file_runtime(prompt)
 
     def _complexity_score(
         self,

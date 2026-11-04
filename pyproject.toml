@@ -1,7 +1,7 @@
 [project]
 name = "jarvis"
 version = "0.1.0"
-description = "Add your description here"
+description = "Personal desktop assistant with local commands, ChatGPT plan access, memory, and independent agents"
 readme = "README.md"
 authors = [
     { name = "salem1916", email = "salemnajar9@gmail.com" }
@@ -10,8 +10,10 @@ requires-python = ">=3.14"
 dependencies = [
     "httpx>=0.28.1",
     "mcp>=2,<3",
+    "playwright>=1.56,<2",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
+    "pyjwt[crypto]>=2.10,<3",
     "pyside6>=6.11.2",
     "pywin32>=312",
     "pywinauto>=0.6.9",

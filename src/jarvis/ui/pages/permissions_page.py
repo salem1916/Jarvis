@@ -153,14 +153,18 @@ class PermissionsPage(QWidget):
             self._build_system_capability_section()
         )
 
+        browser_section = QWidget()
+        browser_layout = QVBoxLayout(browser_section)
+        browser_layout.addWidget(QLabel("Open websites and browser searches"))
+        self.browser_mode_combo = self._build_permission_mode_combo(Capability.USE_BROWSER)
+        browser_layout.addWidget(self.browser_mode_combo)
+        browser_layout.addWidget(QLabel("Always allow is remembered across restarts. Change back to Ask every time whenever you want."))
+        content_layout.addWidget(browser_section)
+
         content_layout.addWidget(
             self._build_static_permission_section(
                 "Browser & External Actions",
                 [
-                    (
-                        "Use browser",
-                        Capability.USE_BROWSER,
-                    ),
                     (
                         "Install software",
                         Capability.INSTALL_SOFTWARE,
@@ -1018,6 +1022,7 @@ class PermissionsPage(QWidget):
         capability: Capability,
     ) -> str:
         names = {
+            Capability.USE_BROWSER: "Open websites and browser searches",
             Capability.WRITE_FILE:
                 "Write files",
 
