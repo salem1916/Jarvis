@@ -56,6 +56,7 @@ from jarvis.tools.list_open_windows import ListOpenWindowsTool
 from jarvis.tools.list_ui_elements import ListUiElementsTool
 from jarvis.tools.open_application import OpenApplicationTool
 from jarvis.tools.open_url import OpenUrlTool
+from jarvis.tools.chrome_tab import ChromeTabNavigation
 from jarvis.tools.read_file import ReadFileTool
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.screen_observation import ScreenObservationTool
@@ -577,9 +578,10 @@ def build_application(
     # -------------------------------------------------
 
     browser = BrowserMCPTool()
+    browser.chrome_tab = ChromeTabNavigation(window_backend, keyboard_action_backend, text_input_backend)
     def open_browser_url(url):
         if getattr(browser.client, "mode", "") == "system":
-            return OpenUrlTool._open_default_browser(url)
+            return browser.chrome_tab.navigate(url)
         # Opening and subsequent reading/clicking must share one tab owner.
         # Returning the observation preserves redirects and verified page titles.
         return browser.execute({"action":"navigate","url":url})

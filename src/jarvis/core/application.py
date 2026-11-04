@@ -2786,8 +2786,12 @@ class JarvisApplication:
         from jarvis.security.policy import PermissionDecision
         from jarvis.tools.screen_observation import ScreenObservationTool
         browser = self.tool_service.registry.get("browser_mcp")
-        if (getattr(getattr(browser, "client", None), "mode", "") != "system"
-                and self.interaction.focus_url and getattr(browser,"last",{}).get("url") == self.interaction.focus_url):
+        if getattr(getattr(browser, "client", None), "mode", "") == "system":
+            request = ToolRequest(tool_name="open_url", arguments={"url": url})
+            self._execute_tool_with_confirmation(request, confirmation_handler)
+            self._remember_open_action(request)
+            return f"Sent {page_label(url)} to your current Chrome tab."
+        if self.interaction.focus_url and getattr(browser,"last",{}).get("url") == self.interaction.focus_url:
             result = self._execute_tool_with_confirmation(ToolRequest(tool_name="browser_mcp",arguments={"action":"navigate","url":url}),confirmation_handler)
             observed_url = str(result.get("url",url)) if isinstance(result,dict) else url
             answer = "Opened " + page_label(observed_url) + " in the current tab."
@@ -3159,16 +3163,18 @@ class JarvisApplication:
             if system_browser and url_match and public_read_url == self.interaction.focus_url:
                 wants_visible_page = re.search(r"\b" + visible_verbs, task[url_match.end():], re.I)
             restricts_opening = re.search(r"\b(?:do not|don['’]t|never|without)\b", task, re.I)
+            visible_target = tool.chrome_tab.selected() if system_browser and wants_visible_page and not restricts_opening else None
             def show_page(url):
                 if url == self.interaction.focus_url:
                     return
                 request = ToolRequest(tool_name="open_url", arguments={"url": url})
-                self._execute_tool_with_confirmation(request, confirmation_handler)
+                with tool.chrome_tab.keep_tab(visible_target):
+                    self._execute_tool_with_confirmation(request, confirmation_handler)
                 self._remember_open_action(request)
             result = run_browser(provider, execute, task, resume_url=resume_url, history=history,
                                  search=search if "research_web" in self.tool_service.registry.names() else None,
                                  grounded=grounded, public_read_url=public_read_url,
-                                 show_page=show_page if system_browser and wants_visible_page and not restricts_opening else None)
+                                 show_page=show_page if visible_target is not None else None)
         finally:
             if engine is not None and self._last_route_decision is not None:
                 self._record_agent_telemetry(self._last_route_decision, engine, time.perf_counter() - started)

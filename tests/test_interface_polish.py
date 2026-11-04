@@ -117,6 +117,16 @@ def test_same_tab_stops_before_input_when_browser_permission_denied(tmp_path,mon
     finally:app.shutdown()
 
 
+def test_chrome_tab_navigation_does_not_type_after_user_switches_tabs(monkeypatch):
+    from jarvis.tools.chrome_tab import ChromeTab, ChromeTabNavigation
+
+    navigation = ChromeTabNavigation(None, None, None)
+    original = ChromeTab(123, (1, 2))
+    monkeypatch.setattr(navigation, "selected", lambda: ChromeTab(123, (1, 3)))
+    with navigation.keep_tab(original), pytest.raises(ValueError, match="tab changed"):
+        navigation.navigate("https://example.com/")
+
+
 def test_quota_after_action_reports_receipt_first_and_keeps_error_details():
     events = [action_event("list_ui_elements",{},{}),action_event("open_url",{"url":"https://www.facebook.com/"},{"ok":True})]
     error = ProviderConnectionError("groq HTTP 429 quota reached",status_code=429,retry_after=42)

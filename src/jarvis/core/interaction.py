@@ -82,6 +82,8 @@ def action_event(tool: str, arguments, result=None) -> AssistantEvent:
             message = search if result is not None else search.replace("Opened", "Opening", 1) + "…"
         else:
             message = f"Opened {page_label(url)}." if result is not None else f"Opening {page_label(url)}…"
+        if isinstance(result, dict) and result.get("current_tab"):
+            message = f"Sent {page_label(url)} to your current Chrome tab."
     elif tool == "open_application":
         name = str(result.get("application", target)) if isinstance(result, dict) else target
         message = f"{name} is opening." if result is not None else f"Opening {name}…"

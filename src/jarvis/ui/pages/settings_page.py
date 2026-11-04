@@ -155,10 +155,11 @@ class SettingsPage(QWidget):
 
         integrations = self._card(layout,"Browser & desktop integrations")
         self.browser_mode = QComboBox()
-        self.browser_mode.addItem("My regular browser · public pages","system")
-        self.browser_mode.addItem("My Chrome tabs · Playwright extension","extension")
-        self.browser_mode.addItem("Separate Jarvis browser","isolated")
-        self._row(integrations,"Browser connection","Open links in your regular browser and read public pages in the background, or choose a browser Jarvis can control.",self.browser_mode)
+        self.browser_mode.addItem("Current Chrome tab","system")
+        if jarvis.integrations is None or not jarvis.integrations.chrome_tab_only:
+            self.browser_mode.addItem("My Chrome tabs · Playwright extension","extension")
+            self.browser_mode.addItem("Separate Jarvis browser","isolated")
+        self._row(integrations,"Browser connection","Use the selected tab in regular Chrome. Public pages can be read in the background.",self.browser_mode)
         self.browser_profile = QLineEdit();self.browser_profile.setPlaceholderText("Automatic, Default, or Profile 1")
         self._row(integrations,"Chrome profile","Optional Chrome profile directory name. Leave empty to use the last active profile.",self.browser_profile)
         self.windows_mcp = ToggleSwitch()
@@ -314,7 +315,7 @@ class SettingsPage(QWidget):
             if self.jarvis.integrations is None:raise ValueError("Integrations are unavailable.")
             self.jarvis.integrations.apply(mode,profile,enabled)
             if mode == "system":
-                return "Integration settings saved. Links open in your regular browser. The trial reads public pages in the background."
+                return "Integration settings saved. Links use your current Chrome tab. Public pages are read in the background."
             return ("Integration settings saved. Chrome may ask you to select a tab on the first connection." if mode == "extension"
                     else "Integration settings saved. Jarvis will use its separate browser; no Chrome extension is needed.")
         self._operate(apply,self.status.setText,"Applying local integration settings…")
@@ -334,7 +335,7 @@ class SettingsPage(QWidget):
             tool = self.jarvis.tool_service.registry.get("browser_mcp")
             assert isinstance(tool, BrowserMCPTool)
             if tool.client.mode == "system":
-                return "Regular browser selected. Public pages are read in the background when requested."
+                return "Current Chrome tab selected. Public pages are read in the background when requested."
             return "Browser tool server ready · " + ", ".join(tool.client.connect()) + (
                 ". Chrome will request a tab connection on the first browser action." if tool.client.mode == "extension" else ". Using a separate Jarvis browser.")
         self._operate(connect, self.status.setText, "Connecting to Playwright MCP and discovering browser tools…")

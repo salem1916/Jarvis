@@ -124,11 +124,13 @@ def test_grounded_desktop_route(assistant, monkeypatch, failure, system_browser)
     if system_browser:
         browser.mode = "system"
         browser.url = "about:blank"
-        def open_in_regular_browser(url, **_kwargs):
+        chrome_tab = app.tool_service.registry.get("browser_mcp").chrome_tab
+        def navigate_current_tab(url):
             visible_opens.append(url)
-            return True
+            return {"ok": True, "url": url, "current_tab": True}
 
-        monkeypatch.setattr("webbrowser.open", open_in_regular_browser)
+        monkeypatch.setattr(chrome_tab, "navigate", navigate_current_tab)
+        monkeypatch.setattr(chrome_tab, "selected", lambda: object())
     control = RequestControl(input_source="voice")
     requests = []
 

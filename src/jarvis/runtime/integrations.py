@@ -20,11 +20,13 @@ class Integrations:
         self.windows = snapshot.backend
         records = app.personal_memory.records("integrations")
         prefs = records[0] if records else {}
-        mode = os.getenv("JARVIS_BROWSER_MODE") or prefs.get("browser_mode", "isolated")
+        self.chrome_tab_only = os.getenv("JARVIS_BROWSER_MODE") == "system"
+        mode = "system" if self.chrome_tab_only else prefs.get("browser_mode", "isolated")
         self.apply(mode,prefs.get("profile",""),prefs.get("windows_enabled",False),save=False)
 
     def apply(self,mode,profile,windows_enabled,*,save=True):
         if mode not in {"system","isolated","extension"}:raise ValueError("Choose a browser connection in Settings.")
+        if self.chrome_tab_only and mode != "system":raise ValueError("This trial uses only your current Chrome tab.")
         if not isinstance(profile,str) or not re.fullmatch(r"[\w .-]{0,80}",profile):raise ValueError("Use a Chrome profile directory name, such as Default or Profile 1.")
         if (mode, profile.strip()) != (self.browser.client.mode, self.browser.client.profile):
             self.browser.client.configure(mode,profile.strip())
