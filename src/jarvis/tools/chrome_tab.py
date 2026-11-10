@@ -13,8 +13,10 @@ import win32gui
 from pywinauto import Desktop
 from pywinauto.uia_defines import IUIA
 
+from jarvis.core.browser_commands import search_description
 from jarvis.core.browser_navigation import browser_executable
-from jarvis.core.request_control import check_cancelled
+from jarvis.core.interaction import action_event
+from jarvis.core.request_control import check_cancelled, report_event
 from jarvis.security.capabilities import Capability
 from jarvis.tools.base import Tool
 from jarvis.tools.desktop_context import DesktopContext, is_jarvis_window
@@ -107,6 +109,7 @@ class ChromeTabNavigation:
         self.expected: ContextVar[ChromeTab | ChromePage | None] = ContextVar("jarvis_expected_chrome_tab", default=None)
         self._foreground = 0
         self._previous_app = 0
+        self._last_follow = None
 
     def track_foreground(self):
         foreground = win32gui.GetForegroundWindow()
@@ -234,13 +237,16 @@ class ChromeTabNavigation:
             raise ValueError("The selected Chrome tab changed. Select it again and retry.")
         return ChromePage(tab, url)
 
-    def _focus(self, page):
-        tab = page.tab
+    def _verify_expected(self, page):
         expected = self.expected.get()
         expected_changed = (not expected.same_page(page) if isinstance(expected, ChromePage)
-                            else expected is not None and expected != tab)
+                            else expected is not None and expected != page.tab)
         if expected_changed:
             raise ValueError("The selected Chrome tab or page changed while I was working. Return to it and try again.")
+
+    def _focus(self, page):
+        self._verify_expected(page)
+        tab = page.tab
         if win32gui.GetForegroundWindow() == tab.window:
             return
         # Worker threads need a Windows message queue before they can transfer focus.
@@ -282,13 +288,33 @@ class ChromeTabNavigation:
 
     def back(self):
         page = self.current_page()
+        return self._go_back(page)
+
+    def _go_back(self, page):
         self._focus(page)
         check_cancelled()
         self.keyboard.perform((win32con.VK_MENU, win32con.VK_LEFT))
         return self._wait_for_page(page)
 
+    def back_and_follow(self, index, kind, site=""):
+        page = self.current_page()
+        back = self._go_back(page)
+        report_event(action_event("current_chrome_navigation", {"action": "back"}, back))
+        check_cancelled()
+        with self.keep_tab(ChromePage(page.tab, back["url"])):
+            return self.follow(index, kind, site)
+
     def follow(self, index, kind, site=""):
         page = self.current_page()
+        self._verify_expected(page)
+        if kind == "reference":
+            last = self._last_follow
+            if last is not None and page.same_page(last[0]):
+                kind = last[1]
+            elif search_description(page.url):
+                kind = "video" if _is_on_site(page.url, "youtube.com") else "result"
+            else:
+                kind = "link"
         if site and not _is_on_site(page.url, site):
             raise ValueError(f"Select a tab on {site} first, then ask for the video again.")
         destination = self._numbered_link(page, index, kind)
@@ -311,7 +337,8 @@ class ChromeTabNavigation:
             result = self.navigate(destination)
         if kind == "video" and _video_key(result["url"]) != _video_key(destination):
             raise ValueError("Chrome reached a different page before the requested video could be verified.")
-        return result
+        self._last_follow = (page, kind)
+        return {**result, "link_kind": kind}
 
     def _numbered_link(self, page, index, kind):
         found = set()
@@ -374,8 +401,14 @@ class ChromeTabTool(Tool):
             return self.navigation.back()
         index = arguments.get("link_index")
         kind = arguments.get("link_kind")
-        if action != "follow_link" or type(index) is not int or not 1 <= index <= 5 or kind not in {"result", "link", "video"}:
+        if (action not in {"follow_link", "back_and_follow"} or type(index) is not int or not 1 <= index <= 5
+                or kind not in {"result", "link", "video", "reference"}):
             raise ValueError("Choose Back or an observed numbered link or video in Chrome.")
+        if action == "back_and_follow":
+            site = arguments.get("site", "")
+            if site not in {"", "youtube.com", "vimeo.com"}:
+                raise ValueError("Select the intended video site in Chrome first.")
+            return self.navigation.back_and_follow(index, kind, site)
         if kind == "video":
             site = arguments.get("site", "")
             if site not in {"", "youtube.com", "vimeo.com"}:

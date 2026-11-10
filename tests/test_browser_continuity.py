@@ -211,6 +211,46 @@ def test_current_chrome_back_and_numbered_link_stay_local(assistant, monkeypatch
     assert not browser.calls
 
 
+def test_voice_correction_goes_back_then_opens_the_next_video_in_the_same_tab(assistant, monkeypatch):
+    from jarvis.tools.chrome_tab import ChromePage, ChromeTab
+
+    app, browser, _ = assistant
+    browser.mode = "system"
+    chrome = app.integrations.browser.chrome_tab
+    tab = ChromeTab(12, (34,))
+    source = ChromePage(tab, "https://www.youtube.com/results?search_query=sqlite")
+    first = ChromePage(tab, "https://www.youtube.com/watch?v=first")
+    second = ChromePage(tab, "https://www.youtube.com/watch?v=second")
+    current = first
+    actions = []
+    def go_back(page):
+        nonlocal current
+        assert page == first
+        actions.append("back")
+        current = source
+        return {"ok": True, "url": source.url}
+
+    def numbered_link(page, index, kind):
+        assert page == source and index == 2 and kind == "video"
+        return second.url
+
+    def navigate(url):
+        chrome._verify_expected(current)
+        assert url == second.url
+        actions.append("follow")
+        return {"ok": True, "url": url}
+
+    monkeypatch.setattr(chrome, "current_page", lambda: current)
+    monkeypatch.setattr(chrome, "_go_back", go_back)
+    monkeypatch.setattr(chrome, "_numbered_link", numbered_link)
+    monkeypatch.setattr(chrome, "navigate", navigate)
+    monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: pytest.fail("Used AI for the correction"))
+    reply = app.interact("Wait, go back and open the second one", request_control=RequestControl(input_source="voice"))
+    assert actions == ["back", "follow"]
+    assert reply.kind == "action" and "Went back and opened" in reply.message
+    assert [event.url for event in reply.events if event.stage == "action_done"] == [source.url, second.url]
+
+
 @pytest.mark.parametrize(("prompt", "site"), [
     ("open the first vd", ""),
     ("first video on youtube", "youtube.com"),

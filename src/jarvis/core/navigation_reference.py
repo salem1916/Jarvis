@@ -7,10 +7,21 @@ def page_navigation(text: str, *, allow_video: bool = False) -> dict | None:
     value = re.sub(r"^(?:can|could|would) you (?:please )?", "", value, flags=re.IGNORECASE).casefold().strip(" .!?")
     if re.fullmatch(r"(?:go |take me )?back(?: (?:a|one) page)?", value):
         return {"action":"back"}
+    if allow_video:
+        correction = re.fullmatch(r"(?:go |take me )?back(?: (?:a|one) page)?[, ]+(?:and then|and|then) (.+)", value)
+        if correction:
+            target = correction[1]
+            if re.match(r"(?:the )?(?:first|second|third|fourth|fifth|[1-5])\b", target):
+                target = "open " + target
+            if re.match(r"(?:open|play|click|follow)\b", target):
+                follow = page_navigation(target, allow_video=True)
+                if follow is not None and follow["action"] == "follow_link":
+                    return {**follow, "action": "back_and_follow"}
     match = re.fullmatch(r"(?:open|click|follow) (?:the )?(first|second|third|fourth|fifth|[1-5]) (link|result|one)", value)
     if match:
         ordinal = int(match[1]) if match[1].isdigit() else ["first","second","third","fourth","fifth"].index(match[1])+1
-        return {"action":"follow_link", "link_index":ordinal, "link_kind":"result" if match[2] == "result" else "link"}
+        kind = "reference" if match[2] == "one" and allow_video else ("result" if match[2] == "result" else "link")
+        return {"action":"follow_link", "link_index":ordinal, "link_kind":kind}
     if allow_video:
         video = re.fullmatch(
             r"(?:(?:open|play|click|follow) )?(?:the )?(first|second|third|fourth|fifth|[1-5]) "

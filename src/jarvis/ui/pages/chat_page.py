@@ -42,6 +42,7 @@ from jarvis.ui.orb import AssistantOrb
 from jarvis.ui.presence import PHASES, AssistantPresence
 from jarvis.ui.screen_panel import ScreenPanel
 from jarvis.ui.voice_panel import VoicePanel
+from jarvis.voice.protocol import spoken_text
 
 
 class AskWorker(QObject):
@@ -209,6 +210,7 @@ class ChatPage(QWidget):
         self._choice_buttons: list[QPushButton] = []
         self._pending_text = ""
         self._voice_reply_suppressed = False
+        self._spoken_prefix = ""
         self._spoken_progress_at = 0.0
         self._voice_hold = False
         self._render_timer = QTimer(self)
@@ -709,6 +711,7 @@ class ChatPage(QWidget):
         self._action_turn = False
         self._reply = None
         self._voice_reply_suppressed = False
+        self._spoken_prefix = ""
         self._spoken_progress_at = 0.0
         self._clear_choices()
         self.status_label.setToolTip("")
@@ -1138,6 +1141,7 @@ class ChatPage(QWidget):
             self._streaming = True
         self._streamed_text += text
         if not self._action_turn:
+            self._speak_first_sentence()
             self.activity_message.setText(self._streamed_text[:420]+("…" if len(self._streamed_text)>420 else ""))
             self._refresh_presence()
         cursor = self.chat_view.textCursor()
@@ -1189,6 +1193,16 @@ class ChatPage(QWidget):
         self.activity_progress.setText(raw.message)
         self._fit_activity()
 
+    def _speak_first_sentence(self) -> None:
+        voice = self.voice_panel.controller
+        if (self._spoken_prefix or self._voice_reply_suppressed or not self.worker
+                or self.worker.control.input_source != "voice" or not voice.enabled or not voice.ready or voice.source is not None):
+            return
+        match = re.match(r"^\s*([A-Za-z][^\n]{11,190}?[.!?])(?=\s)", self._streamed_text)
+        if match:
+            self._spoken_prefix = spoken_text(match[1])
+            voice.say(self._spoken_prefix)
+
     def _handle_reply(self, raw: object) -> None:
         if not isinstance(raw, AssistantReply):
             return
@@ -1198,7 +1212,12 @@ class ChatPage(QWidget):
             self.voice_panel.controller.pause_after_error()
             self.voice_panel._update_talk()
         if not self._voice_reply_suppressed and raw.kind != "cancelled" and not (self.worker and self.worker.control.cancelled.is_set()):
-            self.voice_panel.controller.say(raw.spoken_text)
+            voice = self.voice_panel.controller
+            final = spoken_text(raw.spoken_text)
+            if self._spoken_prefix and raw.kind == "answer" and final.startswith(self._spoken_prefix + " "):
+                voice.say_after_current(final[len(self._spoken_prefix):].strip())
+            elif not self._spoken_prefix or raw.kind != "answer" or final != self._spoken_prefix:
+                voice.say(raw.spoken_text)
         self._clear_approval()
         self._reply = raw
         self._visual_error = raw.kind in {"failed","partial"}
@@ -1283,6 +1302,7 @@ class ChatPage(QWidget):
         if self._approval_token is not None:phase="approval"
         elif self._audio_phase == "speaking":phase="speaking"
         elif self._voice_hold:phase="paused"
+        elif self._audio_phase == "hearing":phase="hearing"
         elif paused and self._audio_phase != "processing":phase="listening"
         elif self.request_in_progress or self._audio_phase in {"preparing","processing"}:phase="thinking"
         elif self._visual_error or self._audio_phase == "error":phase="error"
@@ -1412,6 +1432,7 @@ class ChatPage(QWidget):
 
     def _pause_for_voice(self) -> None:
         self._voice_reply_suppressed = True
+        self._spoken_prefix = ""
         if self.worker is not None:
             self.worker.control.paused.set()
             self.activity_state.setText("JARVIS · Listening")

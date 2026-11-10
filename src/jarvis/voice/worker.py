@@ -35,10 +35,12 @@ class SpeechRuntime:
     def __init__(self, root: Path):
         self.root = root
         self.epoch = 0
+        self.capture_epoch = 0
         self.tts_job: asyncio.Task | None = None
         self.stt_job: asyncio.Task | None = None
         self.pending: dict[str, dict] = {}
         self.endpoint = None
+        self.accepting_audio = False
         self.turn_analyzer = None
         self.smart_turn_unavailable = False
         # A cancelled coroutine can leave native inference running. Locks live
@@ -59,7 +61,9 @@ class SpeechRuntime:
 
     def _completed(self, kind: str) -> None:
         message = self.pending.pop(kind, None)
-        if message is not None and message.get("epoch") == self.epoch:
+        current = self.epoch if kind == "speak" else self.capture_epoch
+        generation = "epoch" if kind == "speak" else "capture_epoch"
+        if message is not None and message.get(generation) == current:
             self.submit(kind, message)
 
     async def load(self) -> None:
@@ -73,6 +77,7 @@ class SpeechRuntime:
         logger.remove()
         logger.add(sys.stderr, level="WARNING")
         from pipecat.clocks.system_clock import SystemClock
+        from pipecat.frames.frames import TTSAudioRawFrame
         from pipecat.pipeline.pipeline import Pipeline
         from pipecat.pipeline.worker import PipelineWorker
         from pipecat.processors.frame_processor import FrameProcessorSetup
@@ -103,6 +108,14 @@ class SpeechRuntime:
         setup = FrameProcessorSetup(clock=SystemClock(), task_manager=self.manager, pipeline_worker=self.pipeline)
         await self.tts.setup(setup)
         await self.stt.setup(setup)
+        # Prepare the phonemizer and first Kokoro inference before the user
+        # speaks. The warm-up audio is discarded inside the local worker.
+        with contextlib.suppress(Exception):
+            await self.tts._update_settings(KokoroTTSService.Settings(language=Language.EN_GB))
+            async with contextlib.aclosing(self.tts.run_tts("Ready.", "warmup")) as frames:
+                async for frame in frames:
+                    if isinstance(frame, TTSAudioRawFrame):
+                        break
         emit("ready", voices=list(VOICES))
 
     async def speak(self, message: dict) -> None:
@@ -157,7 +170,9 @@ class SpeechRuntime:
     async def start_listening(self):
         from pipecat.audio.vad.silero import SileroVADAnalyzer
         from pipecat.audio.vad.vad_analyzer import VADParams
-        await self.stop_listening()
+        if self.endpoint is not None:
+            self.accepting_audio = True
+            return
         if self.turn_analyzer is None and not self.smart_turn_unavailable:
             try:
                 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import (
@@ -168,17 +183,20 @@ class SpeechRuntime:
             except Exception:  # noqa: BLE001 -- keep voice usable if the optional local model fails
                 self.smart_turn_unavailable = True
                 emit("status",message="Natural turn detection is unavailable; using pause detection.")
-        analyzer = SileroVADAnalyzer(sample_rate=16000, params=VADParams(start_secs=0.12, stop_secs=0.6, min_volume=0.4))
+        analyzer = SileroVADAnalyzer(sample_rate=16000, params=VADParams(start_secs=0.12, stop_secs=0.48, min_volume=0.4))
         analyzer.set_sample_rate(16000)
         self.endpoint = SpeechEndpointer(analyzer,self.turn_analyzer)
+        self.accepting_audio = True
 
     async def stop_listening(self):
+        self.accepting_audio = False
         if self.endpoint is not None:
             await self.endpoint.close()
             self.endpoint = None
+            self.turn_analyzer = None
 
     async def listen_audio(self, message):
-        if self.endpoint is None:
+        if self.endpoint is None or not self.accepting_audio:
             return
         pcm = self.normalize_audio(message)
         started, segment = await self.endpoint.feed(pcm)
@@ -186,20 +204,22 @@ class SpeechRuntime:
             self.turn_analyzer = None;self.smart_turn_unavailable = True
             emit("status",message="Natural turn detection stopped; continuing with pause detection.")
         if started:
-            emit("speech_detected", epoch=self.epoch)
+            emit("speech_detected", capture_epoch=self.capture_epoch)
         if segment is not None:
-            await self.stop_listening()
-            emit("utterance", epoch=self.epoch)
-            self.submit("transcribe", {"epoch": self.epoch, "audio": base64.b64encode(segment).decode("ascii"),
+            # Retain the warmed VAD and end-of-turn model for the next
+            # utterance. Ignore mic packets while transcription is in flight.
+            self.accepting_audio = False
+            emit("utterance", capture_epoch=self.capture_epoch)
+            self.submit("transcribe", {"capture_epoch": self.capture_epoch, "audio": base64.b64encode(segment).decode("ascii"),
                                        "rate": 16000, "channels": 1, "format": "s16"})
 
     async def transcribe(self, message: dict) -> None:
         from pipecat.frames.frames import ErrorFrame, TranscriptionFrame
 
-        epoch = message["epoch"]
+        capture_epoch = message["capture_epoch"]
         try:
             async with self.stt_lock:
-                if epoch != self.epoch:
+                if capture_epoch != self.capture_epoch:
                     return
                 pcm = self.normalize_audio(message)
                 audio = self.np.frombuffer(pcm, dtype="<i2").astype(self.np.float32) / 32768
@@ -209,7 +229,7 @@ class SpeechRuntime:
                 frames = audio[:len(audio) // frame_samples * frame_samples].reshape(-1, frame_samples)
                 active_frames = self.np.count_nonzero(self.np.mean(frames ** 2, axis=1) >= 0.003 ** 2)
                 if len(audio) < 3200 or active_frames < 6:
-                    emit("transcript", epoch=epoch, text="")
+                    emit("transcript", capture_epoch=capture_epoch, text="")
                     return
                 audio = (self.np.clip(audio, -1, 0.9999) * 32768).astype("<i2").tobytes()
                 text = []
@@ -218,14 +238,15 @@ class SpeechRuntime:
                         raise RuntimeError(frame.error)  # noqa: TRY004
                     if isinstance(frame, TranscriptionFrame):
                         text.append(frame.text.strip())
-                if epoch == self.epoch:
-                    emit("transcript", epoch=epoch, text=" ".join(text))
+                if capture_epoch == self.capture_epoch:
+                    emit("transcript", capture_epoch=capture_epoch, text=" ".join(text))
         except Exception as exc:  # noqa: BLE001 - isolate optional speech failures from the desktop
-            if epoch == self.epoch:
-                emit("error", epoch=epoch, message=f"Speech recognition: {exc}")
+            if capture_epoch == self.capture_epoch:
+                emit("error", capture_epoch=capture_epoch, message=f"Speech recognition: {exc}")
 
     async def close(self) -> None:
         self.epoch += 1
+        self.capture_epoch += 1
         await self.stop_listening()
         jobs = [job for job in (self.tts_job, self.stt_job) if job is not None]
         for job in jobs:
@@ -245,15 +266,23 @@ async def main() -> None:
             line = await asyncio.to_thread(sys.stdin.buffer.readline, MAX_LINE + 1)
             if not line:
                 break
+            capture_command = False
             try:
                 message = decode(line)
                 kind = message["type"]
                 if kind == "shutdown":
                     break
-                epoch = message.get("epoch")
-                if not isinstance(epoch, int) or epoch < runtime.epoch:
-                    continue
-                runtime.epoch = epoch
+                capture_command = kind in {"listen_start", "listen_audio", "transcribe"}
+                if capture_command or kind == "stop":
+                    generation = message.get("capture_epoch")
+                    if not isinstance(generation, int) or generation < runtime.capture_epoch:
+                        continue
+                    runtime.capture_epoch = generation
+                if not capture_command:
+                    epoch = message.get("epoch")
+                    if not isinstance(epoch, int) or epoch < runtime.epoch:
+                        continue
+                    runtime.epoch = epoch
                 if kind in {"speak", "transcribe"}:
                     # One active inference plus the latest replacement. Old
                     # native inference finishes safely; its events are dropped.
@@ -272,7 +301,8 @@ async def main() -> None:
                 elif kind != "stop":
                     raise ValueError("Unknown voice command.")
             except (ValueError, TypeError, KeyError) as exc:
-                emit("error", epoch=runtime.epoch, message=str(exc))
+                emit("error", **({"capture_epoch": runtime.capture_epoch} if capture_command else {"epoch": runtime.epoch}),
+                     message=str(exc))
     except Exception as exc:  # noqa: BLE001 - report startup failures over IPC
         emit("error", message=f"Voice could not start: {exc}")
     finally:

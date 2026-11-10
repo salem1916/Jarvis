@@ -4,6 +4,7 @@
 "use strict";
 let bridge, context, stream, input, capture, mute, generation=0, nodes=new Set(), nextTime=0, ended=false, session=0;
 let renderOutput, outgoing, incoming, speaker, relayStream, silenceSource;
+let analyser, meterTimer;
 const encode = bytes => btoa(String.fromCharCode(...bytes));
 const normalize = text => text.toLowerCase().replace(/[^a-z0-9]/g, "");
 async function microphoneInput(deviceId) {
@@ -78,6 +79,8 @@ async function start(micLabel, speakerLabel) {
     const speaker=find("audiooutput",speakerLabel);
     await setupPlayback(settings,speaker?.deviceId);
     if(ticket!==session){acquired.getTracks().forEach(t=>t.stop());return;}
+    analyser=context.createAnalyser();analyser.fftSize=256;
+    analyser.connect(renderOutput);
     const worklet=`class Capture extends AudioWorkletProcessor {
       constructor(){super();this.buffer=new Int16Array(960);this.offset=0;}
       process(inputs){const samples=inputs[0]?.[0];if(samples)for(const sample of samples){
@@ -105,10 +108,24 @@ async function stopMic(invalidate=true){
   if(speaker){speaker.pause();speaker.srcObject=null;speaker.remove();speaker=null;}
   if(silenceSource){try{silenceSource.stop();}catch{}silenceSource.disconnect();silenceSource=null;}
   if(relayStream)relayStream.stream.getTracks().forEach(t=>t.stop());relayStream=null;
+  stopMeter();
+  if(analyser)analyser.disconnect();analyser=null;
   renderOutput=context?.destination;
 }
-function stopAudio(epoch){generation=epoch;ended=false;nextTime=0;for(const node of nodes){node.onended=null;try{node.stop();}catch{}}nodes.clear();if(speaker)speaker.pause();}
-function drain(epoch){if(ended && !nodes.size && generation===epoch){ended=false;bridge.notify("played",String(epoch));}}
+function stopMeter(){
+  if(meterTimer){clearInterval(meterTimer);meterTimer=null;bridge.meter(0,generation);}
+}
+function startMeter(){
+  if(!analyser || meterTimer)return;
+  const samples=new Float32Array(analyser.fftSize);
+  meterTimer=setInterval(()=>{
+    analyser.getFloatTimeDomainData(samples);
+    let power=0;for(const sample of samples)power+=sample*sample;
+    bridge.meter(Math.min(1,10*Math.sqrt(power/samples.length)),generation);
+  },33);
+}
+function stopAudio(epoch){stopMeter();generation=epoch;ended=false;nextTime=0;for(const node of nodes){node.onended=null;try{node.stop();}catch{}}nodes.clear();if(speaker)speaker.pause();}
+function drain(epoch){if(!nodes.size){stopMeter();if(ended && generation===epoch){ended=false;bridge.notify("played",String(epoch));}}}
 function push(encoded,epoch){
   if(!context || epoch<generation)return;
   if(epoch!==generation)stopAudio(epoch);
@@ -116,7 +133,7 @@ function push(encoded,epoch){
   const raw=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
   const pcm=new Int16Array(raw.buffer), audio=context.createBuffer(1,pcm.length,24000);
   const data=audio.getChannelData(0);for(let i=0;i<pcm.length;i++)data[i]=pcm[i]/32768;
-  const source=context.createBufferSource();source.buffer=audio;source.connect(renderOutput||context.destination);nodes.add(source);
+  const source=context.createBufferSource();source.buffer=audio;source.connect(analyser||renderOutput||context.destination);nodes.add(source);startMeter();
   source.onended=()=>{nodes.delete(source);drain(epoch);};
   const when=Math.max(context.currentTime+0.015,nextTime);source.start(when);nextTime=when+audio.duration;
 }

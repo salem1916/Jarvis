@@ -13,6 +13,7 @@ class DuplexAudio(QObject):
     listening_changed = Signal(bool)
     error = Signal(str)
     played = Signal(int)
+    output_level = Signal(float, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -106,6 +107,11 @@ class DuplexAudio(QObject):
         elif kind == "error":
             self.stop()
             self.error.emit(value[:350])
+
+    @Slot(float, int)
+    def meter(self, level, epoch):
+        if self.active and self.listening and 0 <= level <= 1:
+            self.output_level.emit(level, epoch)
 
     def push(self, encoded, epoch):
         self._js("push", encoded, epoch)

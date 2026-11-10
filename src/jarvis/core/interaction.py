@@ -92,7 +92,10 @@ def action_event(tool: str, arguments, result=None) -> AssistantEvent:
         url = str(result.get("url", "")) if isinstance(result, dict) else ""
         if url:
             verb = "Went back to" if arguments.get("action") == "back" else "Opened"
-            target = "the requested video" if arguments.get("link_kind") == "video" else page_label(url)
+            if arguments.get("action") == "back_and_follow":
+                verb = "Went back and opened"
+            kind = result.get("link_kind", arguments.get("link_kind"))
+            target = "the requested video" if kind == "video" else page_label(url)
             message = f"{verb} {target} in your current Chrome tab."
         else:
             message = "Using your current Chrome tab…"

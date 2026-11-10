@@ -1,7 +1,7 @@
 """Shared, observable presentation state. It never grants tools or starts capture."""
 from PySide6.QtCore import QObject, Signal
 
-PHASES = {"idle":"Ready", "listening":"Listening", "thinking":"Thinking", "speaking":"Speaking",
+PHASES = {"idle":"Ready", "listening":"Listening", "hearing":"Hearing you", "thinking":"Thinking", "speaking":"Speaking",
           "approval":"Your approval", "paused":"Paused", "stopped":"Stopped", "error":"Needs attention"}
 
 

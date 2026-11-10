@@ -17,6 +17,7 @@ COLORS = {"idle":("#91beed","#ceaff0","#cdece5"), "listening":("#77e1c1","#80c9e
           "approval":("#e6c485","#efaa8e","#f8e8c4"), "paused":("#8794ab","#a9bad4","#c7d2e3"),
           "error":("#ec9aab","#c4a2cc","#f6c0b6")}
 COLORS["stopped"] = COLORS["paused"]
+COLORS["hearing"] = ("#63ecc6", "#6db9f5", "#dbffe6")
 
 
 class AssistantOrb(QWidget):
@@ -71,7 +72,7 @@ class AssistantOrb(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         t = self.clock.elapsed()/1000 if self.presence.motion else 0.0
         speaking = self.presence.phase == "speaking"
-        active = speaking or self.presence.phase == "listening"
+        active = speaking or self.presence.phase in {"listening", "hearing"}
         # Playback can arrive in buffered bursts. Keep a visible speaking pulse
         # between level samples, without presenting synthetic microphone levels.
         strength = max(self.level, 0.32+0.20*math.sin(t*6)**2 if speaking else 0.06) if active else 0.08

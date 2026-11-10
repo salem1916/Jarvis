@@ -45,11 +45,55 @@ def test_barge_in_cancels_speech_without_stopping_microphone(qt, monkeypatch):
     voice.speech_started.connect(lambda:started.append(True))
     voice.transcript.connect(recognized.append)
     old = voice.epoch
-    voice._receive({"type":"speech_detected", "epoch":old})
+    capture = voice.capture_epoch
+    voice._receive({"type":"speech_detected", "capture_epoch":capture})
     assert started == [True] and voice.epoch > old
     assert ("interrupt_speech",voice.epoch) in calls and voice.continuous
-    voice._receive({"type":"transcript", "epoch":voice.epoch, "text":"No, wait, go back"})
+    assert voice.capture_epoch == capture and voice._visual_phase == "hearing"
+    voice._receive({"type":"audio", "epoch":old, "rate":24000, "audio":"AAA="})
+    assert not voice._playback
+    voice._receive({"type":"utterance", "capture_epoch":capture})
+    voice._receive({"type":"transcript", "capture_epoch":capture, "text":"No, wait, go back"})
     assert recognized == ["No, wait, go back"] and calls[-1][0] == "listen_start"
+    voice.duplex = None
+    voice.shutdown()
+
+
+def test_voice_starts_speaking_a_streamed_sentence_and_only_queues_the_remainder(qt, tmp_path, monkeypatch):
+    from jarvis.core.interaction import AssistantReply
+
+    app = build_application(JarvisSettings(workspace_dir=tmp_path))
+    page = ChatPage(app, "Help")
+    voice = page.voice_panel.controller
+    voice.enabled = voice.ready = True
+    page.worker = SimpleNamespace(control=RequestControl(input_source="voice"))
+    spoken, queued = [], []
+    monkeypatch.setattr(voice, "say", spoken.append)
+    monkeypatch.setattr(voice, "say_after_current", queued.append)
+    try:
+        first, second = "SQLite stores data in a file.", "It works without a separate database server."
+        page._handle_delta(first + " It works")
+        page._flush_delta()
+        assert spoken == [first]
+        final = first + " " + second
+        page._handle_reply(AssistantReply("answer", final, final, final))
+        assert spoken == [first] and queued == [second]
+    finally:
+        page.worker = None
+        page.close()
+        app.shutdown()
+
+
+def test_voice_interrupt_discards_the_queued_remainder(qt, monkeypatch):
+    voice = VoiceController()
+    voice.enabled = voice.ready = voice.continuous = voice.duplex_enabled = True
+    voice.duplex = SimpleNamespace(active=True, listening=True, silence=lambda _: None)
+    monkeypatch.setattr(voice, "_send", lambda *_a, **_k: None)
+    voice.say("This is the first sentence.")
+    voice.say_after_current("This is the rest.")
+    assert voice._queued_speech
+    voice._receive({"type": "speech_detected", "capture_epoch": voice.capture_epoch})
+    assert voice._queued_speech == ""
     voice.duplex = None
     voice.shutdown()
 
