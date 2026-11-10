@@ -211,6 +211,44 @@ def test_current_chrome_back_and_numbered_link_stay_local(assistant, monkeypatch
     assert not browser.calls
 
 
+@pytest.mark.parametrize(("prompt", "site"), [
+    ("open the first vd", ""),
+    ("first video on youtube", "youtube.com"),
+    ("play the first clip", ""),
+])
+def test_video_ordinal_routes_to_current_chrome_before_app_lookup(assistant, monkeypatch, prompt, site):
+    app, browser, _ = assistant
+    browser.mode = "system"
+    calls = []
+    def follow(*args):
+        calls.append(args)
+        return {"ok": True, "url": "https://www.youtube.com/watch?v=fixture", "current_tab": True}
+
+    monkeypatch.setattr(app.integrations.browser.chrome_tab, "follow", follow)
+    monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: pytest.fail("Used AI for a local video command"))
+    monkeypatch.setattr(app.intelligence, "browser_provider", lambda: pytest.fail("Used Groq for a local video command"))
+    reply = app.interact(prompt, request_control=RequestControl(input_source="voice"))
+    assert reply.kind == "action" and "video" in reply.message
+    assert calls == [(1, "video", site)]
+    assert not browser.calls
+
+
+def test_chrome_tab_list_stays_out_of_model_and_memory(assistant, monkeypatch):
+    app, browser, _ = assistant
+    browser.mode = "system"
+    monkeypatch.setattr(app.integrations.browser.chrome_tab, "list_tabs", lambda: {
+        "ok": True, "windows": [[{"title": "Private work title", "selected": True},
+                                 {"title": "Public guide", "selected": False}]],
+    })
+    monkeypatch.setattr(app, "ask_with_tools", lambda *_a, **_k: pytest.fail("Sent tab inventory through chat routing"))
+    reply = app.interact("what tabs do i have open in chrome ?")
+    assert reply.kind == "answer" and "Private work title (selected)" in reply.message
+    assert "Public guide" in reply.message and "2 open Chrome tabs" in reply.spoken_text
+    assert "Private work title" not in reply.spoken_text
+    assert not app.conversation.snapshot() and not app.personal_memory.recent_turns()
+    assert not browser.calls
+
+
 def test_read_this_page_after_tab_switch_uses_the_observed_url(assistant, monkeypatch):
     app, browser, _ = assistant
     browser.mode = "system"

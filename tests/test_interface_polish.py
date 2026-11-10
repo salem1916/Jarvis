@@ -137,6 +137,37 @@ def test_chrome_tab_navigation_rejects_same_tab_after_the_url_changes(monkeypatc
         navigation.navigate("https://example.com/destination")
 
 
+def test_video_selection_counts_only_visible_playable_destinations(monkeypatch):
+    from types import SimpleNamespace
+
+    from jarvis.tools.chrome_tab import ChromePage, ChromeTab, ChromeTabNavigation
+
+    def link(url, *, offscreen=False):
+        return SimpleNamespace(element_info=SimpleNamespace(element=SimpleNamespace(CurrentIsOffscreen=offscreen)),
+                               is_enabled=lambda: True, iface_value=SimpleNamespace(CurrentValue=url))
+
+    first = "https://www.youtube.com/watch?v=one"
+    second = "https://www.youtube.com/shorts/two"
+    page = ChromePage(ChromeTab(123, (1, 2)), "https://www.youtube.com/")
+    nav = ChromeTabNavigation(None, None, None)
+    items = [link("https://www.youtube.com/feed/subscriptions"), link("https://www.youtube.com/watch?v=off", offscreen=True),
+             link(first), link(first + "&list=duplicate"), link(second)]
+    monkeypatch.setattr(nav, "_document", lambda _tab: SimpleNamespace(descendants=lambda **_k: items))
+    assert nav._numbered_link(page, 1, "video") == first
+    assert nav._numbered_link(page, 2, "video") == second
+    assert not nav._numbered_link(page, 3, "video")
+
+
+def test_youtube_theme_refresh_keeps_the_page_identity_but_a_new_search_does_not():
+    from jarvis.tools.chrome_tab import ChromePage, ChromeTab
+
+    tab = ChromeTab(123, (1, 2))
+    url = "https://www.youtube.com/results?search_query=sqlite"
+    page = ChromePage(tab, url)
+    assert page.same_page(ChromePage(tab, url + "&themeRefresh=1"))
+    assert not page.same_page(ChromePage(tab, url.replace("sqlite", "python") + "&themeRefresh=1"))
+
+
 def test_quota_after_action_reports_receipt_first_and_keeps_error_details():
     events = [action_event("list_ui_elements",{},{}),action_event("open_url",{"url":"https://www.facebook.com/"},{"ok":True})]
     error = ProviderConnectionError("groq HTTP 429 quota reached",status_code=429,retry_after=42)

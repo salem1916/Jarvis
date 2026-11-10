@@ -2659,7 +2659,13 @@ class JarvisApplication:
         role = re.match(r"^(@(?:local|chatgpt|hermes|plan|groq|gemini|free))\s+(.+)$", prompt.strip(), re.IGNORECASE | re.DOTALL)
         utterance = role[2] if role else prompt
         from jarvis.core.browser_navigation import same_tab_url
-        from jarvis.core.navigation_reference import navigation_reference
+        from jarvis.core.navigation_reference import (
+            chrome_tabs_requested,
+            navigation_reference,
+            page_navigation,
+        )
+        if chrome_tabs_requested(utterance) and "current_chrome_navigation" in self.tool_service.registry.names():
+            return self._list_chrome_tabs(control, confirmation_handler)
         tab_url = same_tab_url(utterance,self.fast_command_router)
         try:
             with request_scope(control):
@@ -2671,7 +2677,7 @@ class JarvisApplication:
                 elif browser_url and navigation_reference(utterance):
                     prepared = PreparedTurn("browser: " + utterance, kind="navigation",
                                             resume_url=self.interaction.focus_url or browser_url)
-                elif system_browser and navigation_reference(utterance):
+                elif system_browser and page_navigation(utterance, allow_video=True):
                     prepared = PreparedTurn("browser: " + utterance, kind="navigation")
                 elif (task := browser_task(utterance)) is not None:
                     resume = browser_url if browser_url == self.interaction.focus_url and "https://" not in task else ""
@@ -2775,6 +2781,28 @@ class JarvisApplication:
                                                  opening="" if opening_done else prepared.opening, search=None if search_done else prepared.search)
         elif reply.kind in {"action", "answer"} and prepared.reference is None:
             self.interaction.retry_turn = None
+        self.last_assistant_reply = reply
+        return reply
+
+    def _list_chrome_tabs(self, control, confirmation_handler):
+        try:
+            with request_scope(control):
+                request = ToolRequest(tool_name="current_chrome_navigation", arguments={"action": "list_tabs"})
+                result = self._execute_tool_with_confirmation(request, confirmation_handler)
+                groups = result["windows"]
+                if not groups:
+                    raise ValueError("I couldn't find a readable regular Chrome window. Open one and try again.")
+                lines = []
+                for number, tabs in enumerate(groups, 1):
+                    lines.append(f"Chrome window {number}")
+                    lines.extend(f"- {tab['title']}" + (" (selected)" if tab["selected"] else "") for tab in tabs)
+                count = sum(map(len, groups))
+                spoken = f"I found {count} open Chrome {'tab' if count == 1 else 'tabs'}. The list is in chat."
+                reply = AssistantReply("answer", "\n".join(lines), spoken, "\n".join(lines), tuple(control.events))
+        except Exception as error:  # noqa: BLE001 -- report local tool errors in chat
+            reply = build_reply(str(error), control.events, error=error)
+        # Tab titles can include private account or work information. Display
+        # them locally without adding them to conversation or personal memory.
         self.last_assistant_reply = reply
         return reply
 
@@ -3116,8 +3144,8 @@ class JarvisApplication:
             raise PermissionDeniedError("Browser access is denied in Permissions.")
         started = time.perf_counter()
         from jarvis.core.navigation_reference import page_navigation
-        navigation = page_navigation(task)
         system_browser = getattr(getattr(tool, "client", None), "mode", "") == "system"
+        navigation = page_navigation(task, allow_video=system_browser)
         public_read_url = ""
         chrome_page = None
         if system_browser:

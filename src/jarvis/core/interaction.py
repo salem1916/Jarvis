@@ -85,10 +85,15 @@ def action_event(tool: str, arguments, result=None) -> AssistantEvent:
         if isinstance(result, dict) and result.get("current_tab"):
             message = (search.rstrip(".") if search else f"Opened {page_label(url)}") + " in your current Chrome tab."
     elif tool == "current_chrome_navigation":
+        if arguments.get("action") == "list_tabs":
+            if result is not None:
+                return AssistantEvent("observed", "Read open regular Chrome tabs.", tool)
+            return AssistantEvent("working", "Checking open Chrome tabs…", tool)
         url = str(result.get("url", "")) if isinstance(result, dict) else ""
         if url:
             verb = "Went back to" if arguments.get("action") == "back" else "Opened"
-            message = f"{verb} {page_label(url)} in your current Chrome tab."
+            target = "the requested video" if arguments.get("link_kind") == "video" else page_label(url)
+            message = f"{verb} {target} in your current Chrome tab."
         else:
             message = "Using your current Chrome tab…"
     elif tool == "open_application":
