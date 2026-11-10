@@ -118,6 +118,7 @@ def test_grounded_desktop_route(assistant, monkeypatch, failure, system_browser)
     import httpx
 
     from jarvis.models.openai_compatible import OpenAICompatibleProvider
+    from jarvis.tools.chrome_tab import ChromePage, ChromeTab
 
     app, browser, standard_model = assistant
     visible_opens = []
@@ -130,7 +131,8 @@ def test_grounded_desktop_route(assistant, monkeypatch, failure, system_browser)
             return {"ok": True, "url": url, "current_tab": True}
 
         monkeypatch.setattr(chrome_tab, "navigate", navigate_current_tab)
-        monkeypatch.setattr(chrome_tab, "selected", lambda: object())
+        monkeypatch.setattr(chrome_tab, "current_page", lambda: ChromePage(
+            ChromeTab(1, (1,)), visible_opens[-1]))
     control = RequestControl(input_source="voice")
     requests = []
 
@@ -163,7 +165,10 @@ def test_grounded_desktop_route(assistant, monkeypatch, failure, system_browser)
     if system_browser:
         assert browser.calls == [] and visible_opens == ["https://example.com/start"]
     from jarvis.agents.reasoning import ReasoningAgentEngine
-    monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: ReasoningAgentEngine(provider))
+    if system_browser:
+        monkeypatch.setattr(app.intelligence, "browser_provider", lambda: provider)
+    else:
+        monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: ReasoningAgentEngine(provider))
     reply = app.interact("browser: Show me the documentation and describe the page.", request_control=control)
     assert len(requests) == (2 if failure in {None, "bad_evidence"} else 1)
     if failure == "cancel":
@@ -185,6 +190,47 @@ def test_grounded_desktop_route(assistant, monkeypatch, failure, system_browser)
     monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: ReasoningAgentEngine(standard_model))
     assert "Documentation" in app.interact("browser: Describe the page.").details
     assert len(standard_model.requests) == 1
+
+
+def test_current_chrome_back_and_numbered_link_stay_local(assistant, monkeypatch):
+    app, browser, _ = assistant
+    browser.mode = "system"
+    chrome = app.integrations.browser.chrome_tab
+    calls = []
+    def action(*args):
+        calls.append(args)
+        return {"ok": True, "url": "https://example.com/docs", "current_tab": True}
+
+    monkeypatch.setattr(chrome, "back", action)
+    monkeypatch.setattr(chrome, "follow", action)
+    monkeypatch.setattr(app, "_route_agent_request", lambda *_a, **_k: pytest.fail("Used AI for local navigation"))
+    monkeypatch.setattr(app.intelligence, "browser_provider", lambda: pytest.fail("Used Groq for local navigation"))
+    assert app.interact("No, wait, go back", request_control=RequestControl(input_source="voice")).kind == "action"
+    assert app.interact("Open the first result").kind == "action"
+    assert calls == [(), (1, "result")]
+    assert not browser.calls
+
+
+def test_read_this_page_after_tab_switch_uses_the_observed_url(assistant, monkeypatch):
+    app, browser, _ = assistant
+    browser.mode = "system"
+    app.interaction.focus_url = "https://example.com/old-tab"
+    app.integrations.grounded_planner = True
+    from jarvis.tools.chrome_tab import ChromePage, ChromeTab
+    page = ChromePage(ChromeTab(2, (3,)), "https://example.com/current-tab")
+    monkeypatch.setattr(app.integrations.browser.chrome_tab, "current_page", lambda: page)
+    from types import SimpleNamespace
+    provider = SimpleNamespace(supports_grounded_planner=True, name="groq", model="fixture")
+    monkeypatch.setattr(app.intelligence, "browser_provider", lambda: provider)
+    reads = []
+    def run(_provider, _execute, _task, **kwargs):
+        reads.append(kwargs["public_read_url"])
+        assert kwargs["show_page"] is None
+        return "Read the selected page."
+
+    monkeypatch.setattr("jarvis.core.application.run_browser", run)
+    assert app.interact("Read this page").message == "Read the selected page."
+    assert reads == [page.url]
 
 
 def test_explicit_browser_goal_is_not_reinterpreted_as_search_intent(assistant):

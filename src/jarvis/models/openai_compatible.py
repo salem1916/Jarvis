@@ -22,6 +22,9 @@ from jarvis.models.connection_errors import (
 from jarvis.models.retry import reserve_format_retry
 
 
+GROUNDED_GROQ_MODELS = frozenset({"openai/gpt-oss-20b", "openai/gpt-oss-120b"})
+
+
 class OpenAICompatibleProvider(ModelProvider):
     """
     Generic provider for OpenAI-compatible Chat Completions APIs.
@@ -45,7 +48,7 @@ class OpenAICompatibleProvider(ModelProvider):
 
     @property
     def supports_grounded_planner(self) -> bool:
-        return self.name == "groq" and self.model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
+        return self.name == "groq" and self.model in GROUNDED_GROQ_MODELS
 
     def __init__(
         self,

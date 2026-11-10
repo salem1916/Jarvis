@@ -83,7 +83,14 @@ def action_event(tool: str, arguments, result=None) -> AssistantEvent:
         else:
             message = f"Opened {page_label(url)}." if result is not None else f"Opening {page_label(url)}…"
         if isinstance(result, dict) and result.get("current_tab"):
-            message = f"Sent {page_label(url)} to your current Chrome tab."
+            message = (search.rstrip(".") if search else f"Opened {page_label(url)}") + " in your current Chrome tab."
+    elif tool == "current_chrome_navigation":
+        url = str(result.get("url", "")) if isinstance(result, dict) else ""
+        if url:
+            verb = "Went back to" if arguments.get("action") == "back" else "Opened"
+            message = f"{verb} {page_label(url)} in your current Chrome tab."
+        else:
+            message = "Using your current Chrome tab…"
     elif tool == "open_application":
         name = str(result.get("application", target)) if isinstance(result, dict) else target
         message = f"{name} is opening." if result is not None else f"Opening {name}…"
@@ -234,7 +241,7 @@ class InteractionSession:
         question = "Which page do you mean?" if self.choices else "Which page, app, or file do you mean?"
         return PreparedTurn("", question, self.choices[:5])
 
-    def prepare(self, prompt: str, router, browser_url: str = "") -> PreparedTurn:
+    def prepare(self, prompt: str, router, browser_url: str = "", *, current_chrome: bool = False) -> PreparedTurn:
         text = re.sub(r"^(?:[0-9]+[.)]|[-*+])\s+", "", prompt.strip())
         from jarvis.core.navigation_reference import navigation_reference
         if navigation_reference(text) and browser_url and browser_url == self.focus_url:
@@ -261,7 +268,7 @@ class InteractionSession:
             message = f"I just read {read.target or page_label(read.url)}." if read else "I haven't read a page in this conversation yet."
             return PreparedTurn("", message, kind="answer", reference=AssistantEvent("reference", message, "browser_mcp", read.url) if read else None)
         if normalized in {"what did you just open", "what did you open", "what have you opened"}:
-            opened = next((event for event in reversed(self.completed) if event.tool in {"open_url", "open_application", "browser_click"}
+            opened = next((event for event in reversed(self.completed) if event.tool in {"open_url", "open_application", "browser_click", "current_chrome_navigation"}
                            or (event.tool == "browser_mcp" and event.operation in {"navigate", "follow_link", "back"})), None)
             return PreparedTurn("", opened.message if opened else "I haven't opened anything in this conversation yet.", kind="answer",
                                 reference=AssistantEvent("reference", opened.message, opened.tool, opened.url, target=opened.target) if opened else None)
@@ -311,6 +318,8 @@ class InteractionSession:
             explicit_page = re.search(r"\b(?:page|website|site)\b", normalized)
             if self.focus_file and not explicit_page:
                 return PreparedTurn(text + ". Use the file at " + json.dumps(self.focus_file) + ".")
+            if current_chrome:
+                return PreparedTurn("browser: " + text)
             if not self.focus_url:
                 return self._choose()
             self.selecting = False

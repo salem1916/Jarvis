@@ -12,13 +12,13 @@ def main():
     sys.path.insert(0, str(root / "src"))
     site.addsitedir(str(base / "Lib" / "site-packages"))
     os.environ.setdefault("JARVIS_BROWSER_PLANNER", "grounded")
-    os.environ.setdefault("JARVIS_BROWSER_MODE", "system")
+    os.environ["JARVIS_BROWSER_MODE"] = "system"
     os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
-    os.chdir(root)
+    os.chdir(os.environ.get("JARVIS_LAUNCH_DIR", str(root)))
 
     from jarvis.ui.desktop import main as desktop_main
 
-    desktop_main(title="JARVIS · Browser Planner Trial")
+    desktop_main(title=os.environ.get("JARVIS_WINDOW_TITLE", "JARVIS · Browser Planner Trial"))
 
 
 if __name__ == "__main__":

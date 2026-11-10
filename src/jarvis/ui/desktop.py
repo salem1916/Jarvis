@@ -102,6 +102,12 @@ class JarvisWindow(QMainWindow):
         self.setStyleSheet(stylesheet_for(theme))
 
         self._build_interface()
+        if self.jarvis.integrations is not None:
+            navigation = self.jarvis.integrations.browser.chrome_tab
+            navigation.track_foreground()
+            browser_focus_timer = QTimer(self)
+            browser_focus_timer.timeout.connect(navigation.track_foreground)
+            browser_focus_timer.start(100)
 
         self._refresh_runtime_sidebar()
         self.chat_page.open_main_requested.connect(self._open_from_companion)

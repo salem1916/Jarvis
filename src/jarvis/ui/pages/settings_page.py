@@ -180,7 +180,7 @@ class SettingsPage(QWidget):
                 grounded.setChecked(jarvis.integrations.grounded_planner)
                 grounded.toggled.connect(self._set_grounded_planner)
                 self._row(integrations, "Grounded browser planner (trial)",
-                          "Uses direct Groq GPT-OSS to follow one visible link and answer from the page. Applies immediately for this session.",
+                          "Uses the saved Groq connection for public-page analysis. Your chat provider is separate.",
                           grounded)
 
         web = self._card(layout, "Web research")
@@ -335,7 +335,9 @@ class SettingsPage(QWidget):
             tool = self.jarvis.tool_service.registry.get("browser_mcp")
             assert isinstance(tool, BrowserMCPTool)
             if tool.client.mode == "system":
-                return "Current Chrome tab selected. Public pages are read in the background when requested."
+                tool.chrome_tab.current_page()
+                tool.client.connect()
+                return "Current Chrome tab verified. The background public-page reader is ready."
             return "Browser tool server ready · " + ", ".join(tool.client.connect()) + (
                 ". Chrome will request a tab connection on the first browser action." if tool.client.mode == "extension" else ". Using a separate Jarvis browser.")
         self._operate(connect, self.status.setText, "Connecting to Playwright MCP and discovering browser tools…")
@@ -380,6 +382,9 @@ class SettingsPage(QWidget):
             source, model = self.source.currentData(), self._model_id()
             if source == "chatgpt_plan" and (not self.hub.account.session().get("sharing") or not model):
                 raise ValueError("Connect ChatGPT, allow plan usage, and load a model first.")
+            if source in API_SOURCES or source == "chatgpt_plan":
+                if model and self.model.findData(model) < 0 and model != self.hub.model_for(source):
+                    raise ValueError("Load available models and select one from this provider's list.")
             self.hub.save_preferences(source, model, self.concise.isChecked(), self.theme.currentData())
             self.jarvis.set_agent_engine(AgentEngineId.AUTO)
             self.jarvis.set_runtime_mode(RuntimeMode.LOCAL if self.local_only.isChecked() else RuntimeMode.AUTO)

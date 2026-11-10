@@ -18,7 +18,10 @@ from jarvis.models.connection_errors import (
     network_failure,
 )
 from jarvis.models.gemini import GeminiProvider
-from jarvis.models.openai_compatible import OpenAICompatibleProvider
+from jarvis.models.openai_compatible import (
+    GROUNDED_GROQ_MODELS,
+    OpenAICompatibleProvider,
+)
 from jarvis.runtime.api_usage import ApiUsage
 from jarvis.runtime.provider_steward import (
     ManagedProvider,
@@ -47,6 +50,8 @@ class IntelligenceHub:
         self.usage = ApiUsage(memory)
         self._balance_cache: dict[str, str] = {}
         self._cooldowns: dict[tuple[str, str, str], ProviderCooldown] = {}
+        self._model_catalogs: dict[str, frozenset[str]] = {}
+        self._plan_catalog_account = None
         self.vault = CredentialVault(settings.state_dir if settings.persist_personal_memory else None)
         self.account = ChatGPTAccount(self.vault)
         self.steward = ProviderSteward(memory)
@@ -95,6 +100,7 @@ class IntelligenceHub:
         policy = self.steward.policy()
         if source == "chatgpt_plan" and policy["commercial"]:
             raise ProviderApprovalError("Personal ChatGPT plan usage is excluded from product mode. Commercial access needs a separate supported agreement.")
+        self._validate_model(source, model.strip())
         if policy["enabled"] and source in API_SOURCES:
             approval = self.steward.require_connection(source)
             selected_model = model.strip() or self.model_for(source)
@@ -109,6 +115,25 @@ class IntelligenceHub:
             self.memory.save_record("automatic_connection", "preferred", {"source": source})
         if model.strip():
             self.memory.save_record("source_models", source, {"source": source, "model": model.strip()})
+
+    def _validate_model(self, source: str, model: str) -> None:
+        catalog = self._model_catalogs.get(source)
+        if source == "chatgpt_plan" and catalog is not None and self._plan_catalog_account != self.account.session().get("id"):
+            catalog = None
+        if (source == "chatgpt_plan" and "/" in model) or (model and catalog is not None and model not in catalog):
+            raise ValueError(f"Choose a model available for {SOURCES[source]}. Use Load available models in Settings.")
+
+    def browser_provider(self) -> ModelProvider:
+        """A dedicated public-page connection, independent of the chat provider."""
+        if self.steward.policy()["enabled"]:
+            model = str(self.steward.approval("groq").get("model", ""))
+        else:
+            model = self.model_for("groq")
+            if model not in GROUNDED_GROQ_MODELS:
+                model = API_SOURCES["groq"][1]
+        if model not in GROUNDED_GROQ_MODELS:
+            raise ValueError("Approve a Groq GPT-OSS model in API assistant to analyze public pages.")
+        return self.provider("groq", model)
 
     def automatic_connection(self) -> tuple[str, str] | None:
         """Use a previously selected free-tier connection, never a newly found key.
@@ -163,6 +188,7 @@ class IntelligenceHub:
             keys.pop(source, None)
             self.steward.revoke(source)
         self.vault.set("api_keys", keys)
+        self._model_catalogs.pop(source, None)
 
     def provider(self, source: str | None = None, model: str = "", *, managed: bool = True) -> ModelProvider:
         prefs = self.preferences()
@@ -171,6 +197,7 @@ class IntelligenceHub:
         if source == "chatgpt_plan":
             if self.steward.policy()["commercial"]:
                 raise ProviderApprovalError("Your personal ChatGPT plan is not a shared backend for customers.")
+            self._validate_model(source, model)
             return ChatGPTPlanProvider(self.account, model)
         if source not in API_SOURCES:
             raise ValueError("Choose an API or ChatGPT plan connection in Settings.")
@@ -227,7 +254,12 @@ class IntelligenceHub:
         if source == "chatgpt_plan":
             if self.steward.policy()["commercial"]:
                 raise ProviderApprovalError("Personal ChatGPT connections are excluded from product mode.")
-            return self.account.list_models()
+            account_id = self.account.session().get("id")
+            models = self.account.list_models()
+            if account_id == self.account.session().get("id"):
+                self._plan_catalog_account = account_id
+                self._model_catalogs[source] = frozenset(model["id"] for model in models)
+            return models
         if source not in API_SOURCES:
             return []
         if self.steward.policy()["enabled"]:
@@ -255,4 +287,5 @@ class IntelligenceHub:
         if source == "openrouter_free":
             models = [{"id": "openrouter/free", "name": "Free models router"}] + [
                 m for m in models if self._free_model(m["id"])]
+        self._model_catalogs[source] = frozenset(model["id"] for model in models)
         return models

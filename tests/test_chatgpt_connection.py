@@ -262,3 +262,22 @@ def test_worker_models_remain_assigned_when_main_connection_changes(tmp_path: Pa
     assert isinstance(provider, ChatGPTPlanProvider)
     assert provider.model == "account-model"
     app.shutdown()
+
+
+def test_browser_provider_is_separate_and_rejects_a_chatgpt_model_mismatch(tmp_path: Path):
+    app = build_application(JarvisSettings(workspace_dir=tmp_path, groq_api_key="fixture"))
+    try:
+        hub = app.intelligence
+        assert hub is not None
+        with pytest.raises(ValueError, match="Load available models"):
+            hub.save_preferences("chatgpt_plan", "openai/gpt-oss-20b", True, "dark")
+        with patch.object(hub.account, "list_models", return_value=[{"id": "account-model", "name": "Account model"}]):
+            hub.list_models("chatgpt_plan")
+        with pytest.raises(ValueError, match="Load available models"):
+            hub.save_preferences("chatgpt_plan", "unavailable-model", True, "dark")
+        hub.save_preferences("chatgpt_plan", "account-model", True, "dark")
+        assert hub.provider().model == "account-model"
+        assert hub.browser_provider().supports_grounded_planner
+        assert hub.browser_provider().name == "groq"
+    finally:
+        app.shutdown()

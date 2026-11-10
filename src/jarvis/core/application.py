@@ -41,6 +41,7 @@ from jarvis.core.interaction import (
     Choice,
     InteractionSession,
     PreparedTurn,
+    action_event,
     build_reply,
 )
 from jarvis.core.personal_memory import PersonalMemory
@@ -2670,7 +2671,7 @@ class JarvisApplication:
                 elif browser_url and navigation_reference(utterance):
                     prepared = PreparedTurn("browser: " + utterance, kind="navigation",
                                             resume_url=self.interaction.focus_url or browser_url)
-                elif system_browser and self.interaction.focus_url and navigation_reference(utterance) and not self.screen_control_enabled:
+                elif system_browser and navigation_reference(utterance):
                     prepared = PreparedTurn("browser: " + utterance, kind="navigation")
                 elif (task := browser_task(utterance)) is not None:
                     resume = browser_url if browser_url == self.interaction.focus_url and "https://" not in task else ""
@@ -2684,7 +2685,7 @@ class JarvisApplication:
                 else:
                     prepared = self._prepare_search_turn(utterance, role[1][1:].casefold() if role else None)
             if prepared is None:
-                prepared = self.interaction.prepare(utterance, self.fast_command_router, browser_url)
+                prepared = self.interaction.prepare(utterance, self.fast_command_router, browser_url, current_chrome=system_browser)
             if prepared.kind not in {"navigation", "current_browser"} and prepared.search is None:
                 if self.fast_command_router.open_request(prepared.prompt) is not None:
                     prepared = self._resolve_open_turn(prepared)
@@ -2788,9 +2789,9 @@ class JarvisApplication:
         browser = self.tool_service.registry.get("browser_mcp")
         if getattr(getattr(browser, "client", None), "mode", "") == "system":
             request = ToolRequest(tool_name="open_url", arguments={"url": url})
-            self._execute_tool_with_confirmation(request, confirmation_handler)
+            result = self._execute_tool_with_confirmation(request, confirmation_handler)
             self._remember_open_action(request)
-            return f"Sent {page_label(url)} to your current Chrome tab."
+            return action_event("open_url", request.arguments, result).message
         if self.interaction.focus_url and getattr(browser,"last",{}).get("url") == self.interaction.focus_url:
             result = self._execute_tool_with_confirmation(ToolRequest(tool_name="browser_mcp",arguments={"action":"navigate","url":url}),confirmation_handler)
             observed_url = str(result.get("url",url)) if isinstance(result,dict) else url
@@ -3118,18 +3119,33 @@ class JarvisApplication:
         navigation = page_navigation(task)
         system_browser = getattr(getattr(tool, "client", None), "mode", "") == "system"
         public_read_url = ""
+        chrome_page = None
         if system_browser:
             if navigation:
-                return "Use Back or select the link in your regular browser. This connection reads public pages by URL."
+                request = ToolRequest(tool_name="current_chrome_navigation", arguments=navigation)
+                result = self._execute_tool_with_confirmation(request, confirmation_handler)
+                return action_event(request.tool_name, request.arguments, result).message
+            chrome_page = tool.chrome_tab.current_page()
             url_match = re.search(r"https://[^\s<>]+", task)
-            public_read_url = url_match[0].rstrip(",.;)") if url_match else self.interaction.focus_url
+            public_read_url = url_match[0].rstrip(",.;)") if url_match else chrome_page.url
             if not public_read_url or urlsplit(public_read_url).scheme != "https":
-                return "Give me a public HTTPS page to read, or ask me to open one first."
+                return "Select a loaded public HTTPS page in Chrome, or include its URL in your request."
         # Back and observed link ordinals are local operations. A missing API
         # connection or exhausted quota must not prevent them from executing.
         engine = None
         provider = None
-        if navigation is None:
+        if system_browser:
+            if self._active_runtime_mode() is RuntimeMode.LOCAL or agent_override == "local":
+                return "Local mode is on. Opening links and Back work locally. Public-page analysis uses the Groq browser connection."
+            if not self.integrations or not self.integrations.grounded_planner or not self.intelligence:
+                return "Enable the public-page planner in Browser & desktop integrations to analyze pages."
+            if agent_override and agent_override != "groq":
+                return "Public-page analysis uses the separate Groq browser connection. Remove the chat-provider prefix to continue."
+            provider = self.intelligence.browser_provider()
+            engine = ReasoningAgentEngine(provider)
+            self._last_route_decision = RouteDecision(RouteTarget.OPENAI, "Public browser analysis via Groq.", 0, source="groq")
+            report_status("Public-page analysis · Groq")
+        elif navigation is None:
             engine = self._route_agent_request("Explain the following page", agent_override)
             if isinstance(engine, NativeAgentEngine):
                 engine = ReasoningAgentEngine(engine.agent_service.model_provider)
@@ -3156,16 +3172,15 @@ class JarvisApplication:
             if grounded and not getattr(provider, "supports_grounded_planner", False):
                 report_status("Grounded planner needs a direct Groq GPT-OSS connection. Using the standard planner.")
                 grounded = False
-            if system_browser and not grounded:
-                return "To read public pages in this trial, enable the grounded browser planner and select direct Groq GPT-OSS."
             visible_verbs = r"(?:open|show|visit|browse|follow)\b"
-            wants_visible_page = re.match(r"^(?:please\s+)?" + visible_verbs, task, re.I)
-            if system_browser and url_match and public_read_url == self.interaction.focus_url:
-                wants_visible_page = re.search(r"\b" + visible_verbs, task[url_match.end():], re.I)
-            restricts_opening = re.search(r"\b(?:do not|don['’]t|never|without)\b", task, re.I)
-            visible_target = tool.chrome_tab.selected() if system_browser and wants_visible_page and not restricts_opening else None
+            wants_visible_page = re.match(r"^(?:please\s+)?" + visible_verbs, task, re.IGNORECASE)
+            if chrome_page and url_match and public_read_url == chrome_page.url:
+                wants_visible_page = re.search(r"\b" + visible_verbs, task[url_match.end():], re.IGNORECASE)
+            opening_goal = re.sub(r"\bwithout (?:opening )?a new tab\b", "", task, flags=re.IGNORECASE)
+            restricts_opening = re.search(r"\b(?:do not|don['’]t|never|without)\b", opening_goal, re.IGNORECASE)
+            visible_target = chrome_page if wants_visible_page and not restricts_opening else None
             def show_page(url):
-                if url == self.interaction.focus_url:
+                if visible_target is None or url == visible_target.url:
                     return
                 request = ToolRequest(tool_name="open_url", arguments={"url": url})
                 with tool.chrome_tab.keep_tab(visible_target):

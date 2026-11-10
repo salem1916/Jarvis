@@ -127,6 +127,16 @@ def test_chrome_tab_navigation_does_not_type_after_user_switches_tabs(monkeypatc
         navigation.navigate("https://example.com/")
 
 
+def test_chrome_tab_navigation_rejects_same_tab_after_the_url_changes(monkeypatch):
+    from jarvis.tools.chrome_tab import ChromePage, ChromeTab, ChromeTabNavigation
+
+    navigation = ChromeTabNavigation(None, None, None)
+    tab = ChromeTab(123, (1, 2))
+    monkeypatch.setattr(navigation, "current_page", lambda: ChromePage(tab, "https://example.com/changed"))
+    with navigation.keep_tab(ChromePage(tab, "https://example.com/start")), pytest.raises(ValueError, match="page changed"):
+        navigation.navigate("https://example.com/destination")
+
+
 def test_quota_after_action_reports_receipt_first_and_keeps_error_details():
     events = [action_event("list_ui_elements",{},{}),action_event("open_url",{"url":"https://www.facebook.com/"},{"ok":True})]
     error = ProviderConnectionError("groq HTTP 429 quota reached",status_code=429,retry_after=42)

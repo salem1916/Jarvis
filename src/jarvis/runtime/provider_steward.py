@@ -289,6 +289,10 @@ class ManagedProvider(ModelProvider):
     def model(self) -> str:
         return str(getattr(self._last, "model", "default"))
 
+    @property
+    def supports_grounded_planner(self) -> bool:
+        return bool(getattr(self.delegate, "supports_grounded_planner", False))
+
     def _call(self, provider: ModelProvider, source: str, request: ModelRequest) -> ModelResponse:
         check_cancelled()
         key = str(getattr(provider, "api_key", ""))
@@ -313,7 +317,7 @@ class ManagedProvider(ModelProvider):
             raise
         except (ValueError, RuntimeError, httpx.HTTPError):
             control = current_control()
-            if (not self.steward.policy()["allow_failover"] or request.tools or request.images
+            if (not self.steward.policy()["allow_failover"] or request.tools or request.images or request.json_schema is not None
                     or any(m.role == "tool" or m.tool_calls for m in request.messages)
                     or (control is not None and control.first_text_seconds is not None)):
                 raise
