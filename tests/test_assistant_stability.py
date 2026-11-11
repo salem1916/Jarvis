@@ -231,12 +231,15 @@ def test_hands_free_discards_recent_playback_echo_but_allows_short_commands(qt):
     received = []
     voice.transcript.connect(received.append)
     voice.say("I could not finish that request. Please try again.")
+    assert not voice._is_playback_echo("I could not finish that request.")
+    voice._playing_text = voice._speech_text
     voice._receive({"type":"transcript", "epoch":voice.epoch, "text":"I could not finish that request."})
     assert not received
     voice.say("Opened Google.")
+    voice._playing_text = voice._speech_text
     voice._receive({"type":"transcript", "epoch":voice.epoch, "text":"Opened Google."})
     assert not received
-    voice._receive({"type":"transcript", "epoch":voice.epoch, "text":"Open Google"})
+    voice._receive({"type":"transcript", "epoch":voice.epoch, "text":"Jarvis, Open Google"})
     assert received == ["Open Google"]
     voice.shutdown()
 

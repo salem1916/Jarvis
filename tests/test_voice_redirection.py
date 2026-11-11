@@ -39,7 +39,10 @@ def test_barge_in_cancels_speech_without_stopping_microphone(qt, monkeypatch):
     voice = VoiceController()
     voice.ready = voice.enabled = voice.continuous = voice.duplex_enabled = True
     calls = []
-    voice.duplex = SimpleNamespace(active=True, listening=True, silence=lambda epoch:calls.append(("silence",epoch)), stop=lambda:pytest.fail("Microphone stopped"))
+    voice._duplex_playing = True
+    voice.duplex = SimpleNamespace(active=True, listening=True, silence=lambda epoch:calls.append(("silence",epoch)),
+                                  duck=lambda enabled: calls.append(("duck", enabled)),
+                                  stop=lambda:pytest.fail("Microphone stopped"))
     monkeypatch.setattr(voice, "_send", lambda kind, **_:calls.append((kind,voice.epoch)))
     started, recognized = [], []
     voice.speech_started.connect(lambda:started.append(True))
@@ -47,13 +50,14 @@ def test_barge_in_cancels_speech_without_stopping_microphone(qt, monkeypatch):
     old = voice.epoch
     capture = voice.capture_epoch
     voice._receive({"type":"speech_detected", "capture_epoch":capture})
-    assert started == [True] and voice.epoch > old
-    assert ("interrupt_speech",voice.epoch) in calls and voice.continuous
+    assert not started and voice.epoch == old and calls == [("duck", True)]
     assert voice.capture_epoch == capture and voice._visual_phase == "hearing"
-    voice._receive({"type":"audio", "epoch":old, "rate":24000, "audio":"AAA="})
-    assert not voice._playback
     voice._receive({"type":"utterance", "capture_epoch":capture})
     voice._receive({"type":"transcript", "capture_epoch":capture, "text":"No, wait, go back"})
+    assert started == [True] and voice.epoch > old
+    assert ("duck", False) in calls and ("interrupt_speech", voice.epoch) in calls and voice.continuous
+    voice._receive({"type":"audio", "epoch":old, "rate":24000, "audio":"AAA="})
+    assert not voice._playback
     assert recognized == ["No, wait, go back"] and calls[-1][0] == "listen_start"
     voice.duplex = None
     voice.shutdown()
@@ -87,15 +91,50 @@ def test_voice_starts_speaking_a_streamed_sentence_and_only_queues_the_remainder
 def test_voice_interrupt_discards_the_queued_remainder(qt, monkeypatch):
     voice = VoiceController()
     voice.enabled = voice.ready = voice.continuous = voice.duplex_enabled = True
-    voice.duplex = SimpleNamespace(active=True, listening=True, silence=lambda _: None)
+    voice.duplex = SimpleNamespace(active=True, listening=True, silence=lambda _: None, duck=lambda _: None)
     monkeypatch.setattr(voice, "_send", lambda *_a, **_k: None)
     voice.say("This is the first sentence.")
     voice.say_after_current("This is the rest.")
     assert voice._queued_speech
     voice._receive({"type": "speech_detected", "capture_epoch": voice.capture_epoch})
+    assert voice._queued_speech
+    voice._receive({"type": "transcript", "capture_epoch": voice.capture_epoch, "text": "Jarvis, stop."})
     assert voice._queued_speech == ""
     voice.duplex = None
     voice.shutdown()
+
+
+def test_hands_free_ignores_background_fragments_and_keeps_the_current_reply(qt, monkeypatch):
+    voice = VoiceController()
+    voice.enabled = voice.ready = voice.continuous = voice.duplex_enabled = True
+    voice._duplex_playing = True
+    ducked, heard, interrupted = [], [], []
+    voice.duplex = SimpleNamespace(active=True, listening=True, duck=ducked.append, silence=interrupted.append)
+    voice.transcript.connect(heard.append)
+    monkeypatch.setattr(voice, "_send", lambda *_a, **_k: None)
+    try:
+        epoch, capture = voice.epoch, voice.capture_epoch
+        for fragment in ("I hope to see you in the next video.", "I can", "It's a photo!"):
+            voice._receive({"type": "speech_detected", "capture_epoch": capture})
+            voice._receive({"type": "transcript", "capture_epoch": capture, "text": fragment})
+        assert not heard and not interrupted and voice.epoch == epoch and voice._duplex_playing
+        assert ducked == [True, False] * 3
+        voice._receive({"type": "speech_detected", "capture_epoch": capture})
+        voice._receive({"type": "transcript", "capture_epoch": capture, "text": "Hey Jarvis, open Google."})
+        assert heard == ["open Google."] and len(interrupted) == 1
+    finally:
+        voice.duplex = None
+        voice.shutdown()
+
+
+def test_combined_microphone_question_is_answered_locally(qt, tmp_path):
+    app = build_application(JarvisSettings(workspace_dir=tmp_path))
+    try:
+        reply = app.interact("How am I listening to you? Can you hear me?",
+                             request_control=RequestControl(input_source="voice"))
+        assert reply.message == "Yes, I heard you. Your words came through."
+    finally:
+        app.shutdown()
 
 
 @pytest.mark.parametrize("phrase", ["Blue balloon.", "Blue balloons."])

@@ -412,7 +412,7 @@ class ChatPage(QWidget):
         self.voice_panel.settings.setWindowFlags(Qt.WindowType.Widget)
         self.voice_panel.settings.setMinimumWidth(0)
         self.voice_panel.barge_in.setText("Interrupt when I speak")
-        self.voice_panel.barge_in.setToolTip("Uses speaker echo cancellation so Jarvis can listen while speaking.")
+        self.voice_panel.barge_in.setToolTip('Uses speaker echo cancellation. Say “Jarvis” followed by your request to interrupt.')
         voice_layout.addWidget(self.voice_panel.settings);voice_layout.addStretch()
         self.voice_panel.settings.show()
         self.voice_panel.options.clicked.disconnect()
@@ -1262,6 +1262,9 @@ class ChatPage(QWidget):
     def _voice_prompt(self, text: str) -> None:
         # Identical core, history and approval handling for typed and spoken
         # instructions. Preserve any unfinished typed draft.
+        if text.casefold().strip(" .!?") in {"stop", "cancel", "stop please"}:
+            self._stop_request(keep_voice=True)
+            return
         if self._handle_control_prompt(text):
             return
         self._voice_hold = False

@@ -122,6 +122,9 @@ class DuplexAudio(QObject):
     def silence(self, epoch):
         self._js("stopAudio", epoch)
 
+    def duck(self, enabled):
+        self._js("duck", enabled)
+
     def stop(self):
         self.active = self.listening = False
         self._js("stopMic")

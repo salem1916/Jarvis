@@ -5,6 +5,8 @@ import re
 
 def voice_status_reply(prompt: str, source: str) -> str | None:
     text = re.sub(r"[^\w\s]", "", prompt.casefold()).strip()
+    if source == "voice":
+        text = re.sub(r"^how (?:am i|are you) listening(?: to (?:you|me))? ", "", text)
     if re.fullmatch(r"(?:(?:hey )?jarvis )?(?:can (?:you|i) hear (?:me|myself)(?: (?:clearly|clear|now))?|are you (?:listening|hearing me)|(?:check )?(?:microphone|audio|voice) status)", text):
         return "Yes, I heard you. Your words came through." if source == "voice" else "I received your typed message. Turn on Voice replies and use Talk or Listen to test your microphone."
     return None

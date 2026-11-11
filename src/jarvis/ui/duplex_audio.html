@@ -4,7 +4,7 @@
 "use strict";
 let bridge, context, stream, input, capture, mute, generation=0, nodes=new Set(), nextTime=0, ended=false, session=0;
 let renderOutput, outgoing, incoming, speaker, relayStream, silenceSource;
-let analyser, meterTimer;
+let analyser, meterTimer, playbackGain;
 const encode = bytes => btoa(String.fromCharCode(...bytes));
 const normalize = text => text.toLowerCase().replace(/[^a-z0-9]/g, "");
 async function microphoneInput(deviceId) {
@@ -81,6 +81,7 @@ async function start(micLabel, speakerLabel) {
     if(ticket!==session){acquired.getTracks().forEach(t=>t.stop());return;}
     analyser=context.createAnalyser();analyser.fftSize=256;
     analyser.connect(renderOutput);
+    playbackGain=context.createGain();playbackGain.connect(analyser);
     const worklet=`class Capture extends AudioWorkletProcessor {
       constructor(){super();this.buffer=new Int16Array(960);this.offset=0;}
       process(inputs){const samples=inputs[0]?.[0];if(samples)for(const sample of samples){
@@ -110,6 +111,7 @@ async function stopMic(invalidate=true){
   if(relayStream)relayStream.stream.getTracks().forEach(t=>t.stop());relayStream=null;
   stopMeter();
   if(analyser)analyser.disconnect();analyser=null;
+  if(playbackGain)playbackGain.disconnect();playbackGain=null;
   renderOutput=context?.destination;
 }
 function stopMeter(){
@@ -125,6 +127,11 @@ function startMeter(){
   },33);
 }
 function stopAudio(epoch){stopMeter();generation=epoch;ended=false;nextTime=0;for(const node of nodes){node.onended=null;try{node.stop();}catch{}}nodes.clear();if(speaker)speaker.pause();}
+function duck(enabled){
+  if(!playbackGain)return;
+  playbackGain.gain.cancelScheduledValues(context.currentTime);
+  playbackGain.gain.setTargetAtTime(enabled ? 0.16 : 1, context.currentTime, 0.02);
+}
 function drain(epoch){if(!nodes.size){stopMeter();if(ended && generation===epoch){ended=false;bridge.notify("played",String(epoch));}}}
 function push(encoded,epoch){
   if(!context || epoch<generation)return;
@@ -133,11 +140,11 @@ function push(encoded,epoch){
   const raw=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
   const pcm=new Int16Array(raw.buffer), audio=context.createBuffer(1,pcm.length,24000);
   const data=audio.getChannelData(0);for(let i=0;i<pcm.length;i++)data[i]=pcm[i]/32768;
-  const source=context.createBufferSource();source.buffer=audio;source.connect(analyser||renderOutput||context.destination);nodes.add(source);startMeter();
+  const source=context.createBufferSource();source.buffer=audio;source.connect(playbackGain||analyser||renderOutput||context.destination);nodes.add(source);startMeter();
   source.onended=()=>{nodes.delete(source);drain(epoch);};
   const when=Math.max(context.currentTime+0.015,nextTime);source.start(when);nextTime=when+audio.duration;
 }
 function finish(epoch){if(epoch===generation){ended=true;drain(epoch);}}
-window.jarvisAudio={start,stopMic,stopAudio,push,finish};
+window.jarvisAudio={start,stopMic,stopAudio,push,finish,duck};
 new QWebChannel(qt.webChannelTransport,channel=>{bridge=channel.objects.audio;bridge.notify("boot","");});
 </script>

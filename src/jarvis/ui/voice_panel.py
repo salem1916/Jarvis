@@ -39,6 +39,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from jarvis.core.navigation_reference import page_navigation
+from jarvis.core.runtime_identity import voice_status_reply
 from jarvis.voice.protocol import (
     MAX_LINE,
     MAX_SECONDS,
@@ -47,6 +49,24 @@ from jarvis.voice.protocol import (
     encode,
     spoken_text,
 )
+
+_WAKE_PREFIX = re.compile(r"^(?:(?:hey|hi|okay|ok)[\s,]+)?jarvis\b[\s,.:!?-]*", re.IGNORECASE)
+_LISTENING_HINT = 'Listening. Say “Jarvis” followed by your request.'
+_INTERRUPTION = re.compile(r"^(?:no|wait|actually)(?:\b|,)", re.IGNORECASE)
+_WORK_CONTROLS = {"stop", "cancel", "stop please", "wait", "no wait", "hold on", "pause", "continue", "go ahead", "resume"}
+
+
+def _hands_free_request(text: str, during_reply: bool) -> str:
+    if match := _WAKE_PREFIX.match(text):
+        return text[match.end():].strip()
+    if voice_status_reply(text, "voice"):
+        return text
+    navigation = page_navigation(text, allow_video=True)
+    if navigation and (navigation["action"] == "back_and_follow" or (during_reply and _INTERRUPTION.match(text))):
+        return text
+    if during_reply and re.sub(r"[^\w\s]", "", text.casefold()).strip() in _WORK_CONTROLS:
+        return text
+    return ""
 
 
 class VoiceController(QObject):
@@ -79,6 +99,10 @@ class VoiceController(QObject):
         self.session_paused = False
         self._listen_after = 0.0
         self._recent_speech = deque(maxlen=3)
+        self._speech_text = ""
+        self._playing_text = ""
+        self._speech_pending = False
+        self._speech_during_reply = False
         self.process: QProcess | None = None
         self.source: QAudioSource | None = None
         self.sink: QAudioSink | None = None
@@ -231,11 +255,12 @@ class VoiceController(QObject):
                     self.audio_check_status.emit("Playback stopped. Checking what you said…")
                 self._phase("hearing")
                 return
-            if self.continuous and self.duplex_enabled:
-                self.silence()
-                self.speech_started.emit()
+            if self.continuous:
+                self._speech_pending = True
+                self._speech_during_reply = self.chat_busy or self._duplex_playing or not self._synthesis_done
+                if self.duplex is not None and self.duplex.listening:
+                    self.duplex.duck(True)
             self._phase("hearing")
-            self.caption_changed.emit("Listening…")
             self.status.emit("Listening… pause briefly to send your message.")
         elif kind == "utterance":
             self.recognizing = True
@@ -244,16 +269,28 @@ class VoiceController(QObject):
             self.status.emit("Transcribing locally…")
         elif kind == "transcript":
             self.recognizing = False
-            self._phase("listening" if self.capture_active else "idle")
             text = str(message.get("text", "")).strip()
             if self._audio_check:
                 self._check_test_transcript(text)
                 return
-            if self.continuous and self._is_playback_echo(text):
-                self.status.emit("Waiting for your voice…")
-                self.speech_rejected.emit()
-                self._send("listen_start")
-                return
+            if self.continuous:
+                during_reply = self._speech_during_reply or self.chat_busy or self._duplex_playing
+                self._speech_pending = self._speech_during_reply = False
+                if self.duplex is not None and self.duplex.listening:
+                    self.duplex.duck(False)
+                text = "" if self._is_playback_echo(text) else _hands_free_request(text, during_reply)
+                if not text:
+                    phase = "speaking" if self._duplex_playing else "listening" if self.capture_active else "idle"
+                    self._phase(phase)
+                    self.status.emit(_LISTENING_HINT)
+                    self.speech_rejected.emit()
+                    if self.duplex_enabled:
+                        self._send("listen_start")
+                    return
+                if self.duplex_enabled:
+                    self.silence()
+                    self.speech_started.emit()
+            self._phase("listening" if self.capture_active else "idle")
             if text:
                 self.status.emit("Heard: " + text)
                 self.transcript.emit(text)
@@ -266,9 +303,11 @@ class VoiceController(QObject):
             if message.get("rate") != 24000:
                 raise ValueError("Unsupported speech output format.")
             pcm = base64.b64decode(message.get("audio", ""), validate=True)
-            self._phase("speaking")
+            if not self._speech_pending:
+                self._phase("speaking")
             if self.continuous and self.duplex_enabled and self.duplex is not None and self.duplex.listening:
                 self._duplex_playing = True
+                self._playing_text = self._speech_text
                 self.duplex.push(message.get("audio", ""), self.epoch)
                 if self._audio_check == "preparing":
                     self._audio_check = "playing"
@@ -285,6 +324,7 @@ class VoiceController(QObject):
                 self.duplex.finish(self.epoch)
                 return
             if not self._pump_timer.isActive():
+                self._remember_playback()
                 if self._continue_speech():
                     return
                 self._phase("listening" if self.capture_active else "idle")
@@ -300,12 +340,14 @@ class VoiceController(QObject):
                 self._end_audio_check("Audio check stopped.")
             self.capture_epoch += 1
             self.recognizing = False
+            self._speech_pending = self._speech_during_reply = False
             self._stop_capture()
             if self.duplex is not None:
                 self.duplex.stop()
         self._pump_timer.stop()
         self._playback.clear()
         self._synthesis_done = True
+        self._remember_playback()
         self._duplex_playing = False
         if self.sink is not None:
             self.sink.stop()
@@ -351,7 +393,7 @@ class VoiceController(QObject):
                 self.say("This is Jarvis testing your audio. Speak over this sentence when the instructions say to. "
                          "I will keep talking for a few more seconds so you have time to try.")
             else:
-                self.status.emit("Listening · echo cancellation on. Speak to interrupt Jarvis.")
+                self.status.emit(_LISTENING_HINT)
 
     def _duplex_level(self, level, epoch):
         if epoch == self.epoch and self._duplex_playing:
@@ -366,15 +408,17 @@ class VoiceController(QObject):
 
     def _duplex_played(self, epoch):
         if epoch == self.epoch:
+            self._remember_playback()
             self._duplex_playing = False
             if self._audio_check == "playing":
                 self._finish_audio_check("The sample finished without an interruption. Check your microphone or try again.")
                 return
             if self._continue_speech():
                 return
-            self._phase("listening" if self.capture_active else "idle")
-            if self.continuous:
-                self.status.emit("Listening · speak to interrupt or give another instruction.")
+            if not self._speech_pending:
+                self._phase("listening" if self.capture_active else "idle")
+                if self.continuous:
+                    self.status.emit(_LISTENING_HINT)
 
     def start_audio_check(self):
         if self._audio_check:
@@ -474,7 +518,7 @@ class VoiceController(QObject):
         self.privacy_changed.emit()
         if self.continuous:
             self._send("listen_start")
-            self.status.emit("Listening hands-free… speak, then pause to send. Stop voice ends the session.")
+            self.status.emit(_LISTENING_HINT)
         else:
             self._limit.start(MAX_SECONDS * 1000)
             self.status.emit("Listening… release Talk to send. Maximum 20 seconds.")
@@ -552,9 +596,20 @@ class VoiceController(QObject):
         words = len(normalized.split())
         if words < 2:
             return False
-        return any(time.monotonic() - when < 5 and (normalized == spoken or
-                   (words >= 4 and (normalized in spoken or SequenceMatcher(None, normalized, spoken).ratio() > 0.93)))
-                   for when, spoken in self._recent_speech)
+        now = time.monotonic()
+        recent = [spoken for when, spoken in self._recent_speech if now - when < 5]
+        if self._playing_text:
+            recent.append(self._playing_text)
+        return any(
+            normalized == spoken
+            or (words >= 4 and (normalized in spoken or SequenceMatcher(None, normalized, spoken).ratio() > 0.93))
+            for spoken in recent
+        )
+
+    def _remember_playback(self):
+        if self._playing_text:
+            self._recent_speech.append((time.monotonic(), self._playing_text))
+        self._playing_text = self._speech_text = ""
 
     def pause_after_error(self):
         self.stop_session()
@@ -584,7 +639,7 @@ class VoiceController(QObject):
             # The final result supersedes progress speech. Give it a fresh
             # generation so late progress audio/completion cannot replace it.
             self.silence()
-        self._recent_speech.append((time.monotonic(), " ".join(re.findall(r"\w+", text.casefold()))))
+        self._speech_text = " ".join(re.findall(r"\w+", text.casefold()))
         self._synthesis_done = False
         self.caption_changed.emit(text)
         self._phase("preparing")
@@ -637,6 +692,7 @@ class VoiceController(QObject):
         if count > 0:
             written = self.output.write(QByteArray(bytes(self._playback[:count])))
             if written > 0:
+                self._playing_text = self._speech_text
                 self._level(self._playback[:written])
                 del self._playback[:written]
         if not self._playback and self._synthesis_done and self.sink.state() == QtAudio.State.IdleState:
@@ -747,7 +803,8 @@ class VoicePanel(QWidget):
         note.setMinimumHeight(55)
         grid.addWidget(note, 8, 0, 1, 2)
         grid.addWidget(self.barge_in, 9, 0, 1, 2)
-        note.setText("Hands-free: Listen once, then speak naturally. With interruption enabled, you can redirect Jarvis while it talks or works. Stop voice ends microphone access.")
+        note.setText('Hands-free starts with Listen. Say “Jarvis” followed by your request, then pause. '
+                     'Say “wait” to pause a reply. Stop voice turns the microphone off.')
         self.settings.hide()
         self.options.clicked.connect(lambda: self.settings.setVisible(not self.settings.isVisible()))
         self.enabled.toggled.connect(self.controller.enable)

@@ -3,7 +3,7 @@ import re
 
 
 def page_navigation(text: str, *, allow_video: bool = False) -> dict | None:
-    value = re.sub(r"^(?:(?:no|wait|actually|please|okay|ok)[,! ]+)+", "", text.strip(), flags=re.IGNORECASE)
+    value = re.sub(r"^(?:(?:no|wait|actually|please|okay|ok)[\s,.:!?-]+)+", "", text.strip(), flags=re.IGNORECASE)
     value = re.sub(r"^(?:can|could|would) you (?:please )?", "", value, flags=re.IGNORECASE).casefold().strip(" .!?")
     if re.fullmatch(r"(?:go |take me )?back(?: (?:a|one) page)?", value):
         return {"action":"back"}
