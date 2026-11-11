@@ -98,6 +98,42 @@ def test_voice_interrupt_discards_the_queued_remainder(qt, monkeypatch):
     voice.shutdown()
 
 
+@pytest.mark.parametrize("phrase", ["Blue balloon.", "Blue balloons."])
+def test_audio_check_hears_interruption_without_sending_it_to_chat(qt, monkeypatch, phrase):
+    voice = VoiceController()
+    voice.enabled = voice.ready = True
+    device = SimpleNamespace(isNull=lambda: False)
+    voice.input_device = voice.output_device = device
+    messages, chat, paused = [], [], []
+    voice.audio_check_status.connect(messages.append)
+    voice.transcript.connect(chat.append)
+    voice.speech_started.connect(lambda: paused.append(True))
+    stops = []
+    duplex = SimpleNamespace(active=True, listening=True, push=lambda *_: None,
+                             silence=lambda *_: None, stop=lambda: stops.append(True))
+    def start():
+        voice.duplex = duplex
+        voice._duplex_ready(True)
+
+    monkeypatch.setattr(voice, "_start_duplex", start)
+    monkeypatch.setattr(voice, "_send", lambda *_a, **_k: None)
+    try:
+        voice.start_audio_check()
+        assert voice.audio_check_active and voice.continuous and voice._audio_check_timer.isActive()
+        voice._receive({"type": "audio", "epoch": voice.epoch, "rate": 24000, "audio": "AAA="})
+        assert "blue balloon" in messages[-1]
+        capture = voice.capture_epoch
+        voice._receive({"type": "speech_detected", "capture_epoch": capture})
+        assert not stops and not paused and voice.capture_epoch == capture
+        voice._receive({"type": "transcript", "capture_epoch": capture, "text": phrase})
+        assert not chat and stops and messages[-1].startswith("Passed.")
+        assert not voice.audio_check_active and not voice.continuous and not voice.duplex_enabled
+        assert not voice._audio_check_timer.isActive()
+    finally:
+        voice.duplex = None
+        voice.shutdown()
+
+
 def test_pause_blocks_next_operation_and_cancel_releases_it():
     control = RequestControl()
     control.paused.set()

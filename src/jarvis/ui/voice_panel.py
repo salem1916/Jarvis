@@ -60,6 +60,7 @@ class VoiceController(QObject):
     caption_changed = Signal(str)
     privacy_changed = Signal()
     level_changed = Signal(float)
+    audio_check_status = Signal(str)
 
     def __init__(self, parent: QObject | None = None, root: Path | None = None):
         super().__init__(parent)
@@ -108,10 +109,19 @@ class VoiceController(QObject):
         self._resume_timer = QTimer(self)
         self._resume_timer.setInterval(150)
         self._resume_timer.timeout.connect(self._resume_listening)
+        self._audio_check = ""
+        self._audio_check_previous_duplex = False
+        self._audio_check_timer = QTimer(self)
+        self._audio_check_timer.setSingleShot(True)
+        self._audio_check_timer.timeout.connect(self._audio_check_timed_out)
 
     @property
     def capture_active(self):
         return self.source is not None or bool(self.duplex is not None and getattr(self.duplex,"listening",False))
+
+    @property
+    def audio_check_active(self):
+        return bool(self._audio_check)
 
     def _phase(self, phase):
         if self._visual_phase != phase:
@@ -189,7 +199,10 @@ class VoiceController(QObject):
             self._watchdog.stop()
             self.ready = True
             self.ready_changed.emit(True)
-            self.status.emit("Voice ready · microphone off. Choose your voice mode, then start talking.")
+            if self._audio_check == "loading":
+                self._begin_audio_check()
+            else:
+                self.status.emit("Voice ready · microphone off. Choose your voice mode, then start talking.")
             return
         if "capture_epoch" in message:
             if message["capture_epoch"] != self.capture_epoch:
@@ -197,9 +210,12 @@ class VoiceController(QObject):
         elif message.get("epoch", self.epoch) != self.epoch:
             return
         if kind == "error":
-            self.stop_session()
-            self.recognizing = False
             self._last_error = str(message.get("message", "Voice failed."))
+            if self._audio_check:
+                self._finish_audio_check(self._last_error)
+            else:
+                self.stop_session()
+            self.recognizing = False
             self._synthesis_done = True
             self._phase("error")
             self.status.emit(self._last_error)
@@ -208,6 +224,13 @@ class VoiceController(QObject):
         elif kind == "synthesis_start":
             self._synthesis_done = False
         elif kind == "speech_detected":
+            if self._audio_check:
+                if self._audio_check == "playing":
+                    self._audio_check = "interrupted"
+                    self.silence()
+                    self.audio_check_status.emit("Playback stopped. Checking what you said…")
+                self._phase("hearing")
+                return
             if self.continuous and self.duplex_enabled:
                 self.silence()
                 self.speech_started.emit()
@@ -223,6 +246,9 @@ class VoiceController(QObject):
             self.recognizing = False
             self._phase("listening" if self.capture_active else "idle")
             text = str(message.get("text", "")).strip()
+            if self._audio_check:
+                self._check_test_transcript(text)
+                return
             if self.continuous and self._is_playback_echo(text):
                 self.status.emit("Waiting for your voice…")
                 self.speech_rejected.emit()
@@ -244,6 +270,9 @@ class VoiceController(QObject):
             if self.continuous and self.duplex_enabled and self.duplex is not None and self.duplex.listening:
                 self._duplex_playing = True
                 self.duplex.push(message.get("audio", ""), self.epoch)
+                if self._audio_check == "preparing":
+                    self._audio_check = "playing"
+                    self.audio_check_status.emit('Say “blue balloon” now, while Jarvis is speaking.')
                 return
             if len(pcm) % 2 or len(self._playback) + len(pcm) > 8_000_000:
                 raise ValueError("Speech output exceeded its buffer limit.")
@@ -267,6 +296,8 @@ class VoiceController(QObject):
         self.epoch += 1
         self._queued_speech = ""
         if not keep_listening:
+            if self._audio_check:
+                self._end_audio_check("Audio check stopped.")
             self.capture_epoch += 1
             self.recognizing = False
             self._stop_capture()
@@ -314,24 +345,95 @@ class VoiceController(QObject):
         if ready and self.continuous:
             self._phase("listening")
             self._send("listen_start")
-            self.status.emit("Listening · echo cancellation on. Speak to interrupt Jarvis.")
+            if self._audio_check == "connecting":
+                self._audio_check = "preparing"
+                self.audio_check_status.emit("Wait for the sample to start.")
+                self.say("This is Jarvis testing your audio. Speak over this sentence when the instructions say to. "
+                         "I will keep talking for a few more seconds so you have time to try.")
+            else:
+                self.status.emit("Listening · echo cancellation on. Speak to interrupt Jarvis.")
 
     def _duplex_level(self, level, epoch):
         if epoch == self.epoch and self._duplex_playing:
             self.level_changed.emit(level)
 
     def _duplex_error(self, message):
-        self.stop_session()
+        if self._audio_check:
+            self._finish_audio_check("Hands-free audio: " + message)
+        else:
+            self.stop_session()
         self.status.emit("Hands-free audio: " + message)
 
     def _duplex_played(self, epoch):
         if epoch == self.epoch:
             self._duplex_playing = False
+            if self._audio_check == "playing":
+                self._finish_audio_check("The sample finished without an interruption. Check your microphone or try again.")
+                return
             if self._continue_speech():
                 return
             self._phase("listening" if self.capture_active else "idle")
             if self.continuous:
                 self.status.emit("Listening · speak to interrupt or give another instruction.")
+
+    def start_audio_check(self):
+        if self._audio_check:
+            return
+        if (self.chat_busy or self.continuous or self.capture_active or self.recognizing
+                or not self._synthesis_done or self._duplex_playing or self.sink is not None):
+            self.audio_check_status.emit("Finish the current task or stop voice before running the audio check.")
+            return
+        self._audio_check_previous_duplex = self.duplex_enabled
+        self._audio_check = "loading"
+        self.audio_check_status.emit("Preparing your microphone and speaker test…")
+        if self.ready:
+            self._begin_audio_check()
+        else:
+            self.enable(True)
+            if self.process is None:
+                self._finish_audio_check("Voice setup is required before the audio check can start.")
+
+    def _begin_audio_check(self):
+        if self.input_device.isNull() or self.output_device.isNull():
+            self._finish_audio_check("Select a microphone and speaker in Voice settings, then try again.")
+            return
+        self._audio_check = "connecting"
+        self.duplex_enabled = self.continuous = True
+        self._audio_check_timer.start(25_000)
+        try:
+            self._start_duplex()
+        except (OSError, RuntimeError) as error:
+            self._finish_audio_check(f"Could not start hands-free audio. {error}")
+
+    def _check_test_transcript(self, text):
+        if self._audio_check != "interrupted":
+            if self._audio_check:
+                self._send("listen_start")
+            return
+        if re.search(r"\bblue balloons?\b", text, re.IGNORECASE):
+            self._finish_audio_check("Passed. Jarvis stopped speaking and heard the test phrase.")
+        elif not re.search(r"\w", text):
+            self._finish_audio_check("Playback stopped, but Jarvis couldn't hear the phrase clearly. Try speaking closer to the microphone.")
+        elif self._is_playback_echo(text):
+            self._finish_audio_check("Jarvis heard its own playback. Lower speaker volume or move the microphone farther from the speaker and retry.")
+        else:
+            self._finish_audio_check('Playback stopped, but Jarvis heard a different phrase. Try again and say “blue balloon”.')
+
+    def _audio_check_timed_out(self):
+        if self._audio_check:
+            self._finish_audio_check("Audio check timed out. Check your selected devices and Windows microphone access.")
+
+    def _end_audio_check(self, message):
+        self._audio_check = ""
+        self.continuous = False
+        self.duplex_enabled = self._audio_check_previous_duplex
+        self._audio_check_timer.stop()
+        self.audio_check_status.emit(message)
+
+    def _finish_audio_check(self, message):
+        self._end_audio_check(message)
+        self.stop_session()
+        self.status.emit(message + " Microphone off.")
 
     def begin_recording(self) -> None:
         if self.continuous and self.duplex_enabled:
@@ -658,6 +760,13 @@ class VoicePanel(QWidget):
         self.stop.clicked.connect(self._update_talk)
         self.controller.ready_changed.connect(self.talk.setEnabled)
         self.controller.ready_changed.connect(self._ready_changed)
+        self.audio_check = QPushButton("Check microphone and speaker")
+        self.audio_check.clicked.connect(self.controller.start_audio_check)
+        grid.addWidget(self.audio_check, 10, 0, 1, 2)
+        self.audio_check_result = QLabel('When the sample plays, say “blue balloon” to interrupt it.')
+        self.audio_check_result.setWordWrap(True)
+        grid.addWidget(self.audio_check_result, 11, 0, 1, 2)
+        self.controller.audio_check_status.connect(self.audio_check_result.setText)
         self.controller.status.connect(self.label.setText)
         self.controller.status.connect(self._update_talk)
         self.voices.currentIndexChanged.connect(lambda: setattr(self.controller, "voice", self.voices.currentData()))
@@ -701,9 +810,9 @@ class VoicePanel(QWidget):
         self.talk.setText(("Stop" if self.controller.continuous else "Listen") if self.mode.currentData() == "hands_free" else "Hold" if self.mode.currentData() == "hold" else "Send" if self.controller.source is not None else "Talk")
 
     def _ready_changed(self, ready: bool) -> None:
-        if not ready and not self.controller.enabled:
+        if ready or not self.controller.enabled:
             self.enabled.blockSignals(True)
-            self.enabled.setChecked(False)
+            self.enabled.setChecked(ready)
             self.enabled.blockSignals(False)
 
     def refresh_devices(self) -> None:

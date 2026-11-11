@@ -668,7 +668,11 @@ class ChatPage(QWidget):
         if not prompt:
             return
 
-        self.voice_panel.controller.silence()
+        voice = self.voice_panel.controller
+        if voice.audio_check_active:
+            voice.stop_session()
+        else:
+            voice.silence()
 
         if self._handle_control_prompt(prompt):
             self.input_box.clear()
