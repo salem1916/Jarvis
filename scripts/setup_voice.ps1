@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $ProjectRoot
 try {
-    $UvCommand = Get-Command $UvPath -CommandType Application -ErrorAction SilentlyContinue
+    $UvCommand = Get-Command $UvPath -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $UvCommand -and $UvPath -ne "uv") { throw "uv was not found at $UvPath." }
     $UvExe = if ($UvCommand) { $UvCommand.Source } else { Join-Path $env:LOCALAPPDATA 'hermes\bin\uv.exe' }
     if (-not (Test-Path -LiteralPath $UvExe)) { throw 'Install uv, then run this setup again.' }

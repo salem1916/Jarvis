@@ -5,7 +5,8 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$UvExe = (Get-Command $UvPath -CommandType Application -ErrorAction Stop).Source
+$UvCommand = Get-Command $UvPath -CommandType Application -ErrorAction Stop | Select-Object -First 1
+$UvExe = $UvCommand.Source
 
 Push-Location $ProjectRoot
 try {
