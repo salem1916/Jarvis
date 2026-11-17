@@ -1,9 +1,13 @@
-param([string]$Python = "3.13")
+param(
+    [string]$Python = "3.13",
+    [string]$UvPath = "uv"
+)
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $ProjectRoot
 try {
-    $UvCommand = Get-Command uv -ErrorAction SilentlyContinue
+    $UvCommand = Get-Command $UvPath -CommandType Application -ErrorAction SilentlyContinue
+    if (-not $UvCommand -and $UvPath -ne "uv") { throw "uv was not found at $UvPath." }
     $UvExe = if ($UvCommand) { $UvCommand.Source } else { Join-Path $env:LOCALAPPDATA 'hermes\bin\uv.exe' }
     if (-not (Test-Path -LiteralPath $UvExe)) { throw 'Install uv, then run this setup again.' }
     & $UvExe venv --python $Python .voice-venv --allow-existing

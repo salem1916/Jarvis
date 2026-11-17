@@ -2,7 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Launcher = Join-Path $PSScriptRoot "start_jarvis.ps1"
-$ShortcutPath = Join-Path $env:USERPROFILE "Desktop\JARVIS.lnk"
+$DesktopPath = [Environment]::GetFolderPath("DesktopDirectory")
+$ShortcutPath = Join-Path $DesktopPath "JARVIS.lnk"
 
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($ShortcutPath)

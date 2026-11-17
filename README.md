@@ -110,21 +110,19 @@ API network waits. See [setup, verification, and limits](docs/WEB_RESEARCH.md).
 
 ## Run
 
-Requirements: Windows, Python 3.14+, and `uv`. Ollama and Hermes are optional for their
-respective backends. An OpenAI API key is required for the older `chatgpt` API backend;
-the new `plan` backend uses browser sign-in instead.
+On a new Windows laptop, install [Git](https://git-scm.com/install/windows) and
+[uv](https://docs.astral.sh/uv/getting-started/installation/), then open a new PowerShell window.
 
 ```powershell
-cd C:\Users\salem\Jarvis
-uv sync --locked
-uv run python -m jarvis.ui
+git clone --branch experiment/grounded-browser-planner https://github.com/salem1916/Jarvis.git
+cd Jarvis
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup_windows.ps1
 ```
 
-For this existing installation, the installed environment can also launch directly:
-
-```powershell
-.venv\Scripts\python.exe -m jarvis.ui
-```
+Setup gets Python through `uv`, creates the desktop and browser planner environments,
+and adds a **JARVIS** shortcut. Add `-Voice` to the setup command to install the
+local speech runtime and download its models. Details for Ollama, Hermes, and moving
+your memory are in the [new laptop guide](docs/NEW_WINDOWS_LAPTOP.md).
 
 Keep your existing `.env`. Add the OpenAI settings from `.env.example` to that file;
 do not replace your existing Hermes or other provider settings. Restart after editing.
